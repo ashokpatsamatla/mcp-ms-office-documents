@@ -22,6 +22,8 @@ def get_content_type(file_name: str) -> str:
         return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     elif "eml" in file_name:
         return "application/octet-stream"
+    elif "xml" in file_name:
+        return "application/xml"
     else:
         raise ValueError("Unknown file type")
 
