@@ -23,8 +23,13 @@ def upload_to_gcs(file_object, file_name: str, gcscfg, signed_url_expires_in: in
     content_type = get_content_type(file_name)
 
     try:
-        # Create a GCS client with credentials from the configured path
-        storage_client = storage.Client.from_service_account_json(gcscfg.credentials_path)
+        # Use explicit service-account JSON when configured, otherwise fall
+        # back to Application Default Credentials (ADC).  ADC automatically
+        # picks up GKE Workload Identity / OIDC-federated service accounts.
+        if gcscfg.credentials_path:
+            storage_client = storage.Client.from_service_account_json(gcscfg.credentials_path)
+        else:
+            storage_client = storage.Client()
 
         bucket = storage_client.bucket(gcscfg.bucket)
         blob = bucket.blob(file_name)

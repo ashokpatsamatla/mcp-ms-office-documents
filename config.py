@@ -77,21 +77,19 @@ class S3Settings(BaseModel):
 
 
 class GCSSettings(BaseModel):
-    """Required configuration for Google Cloud Storage uploads."""
+    """Required configuration for Google Cloud Storage uploads.
+
+    When credentials_path is omitted, the client uses Application Default
+    Credentials (ADC), which automatically picks up Workload Identity on GKE.
+    """
     bucket: str
-    credentials_path: str
+    credentials_path: Optional[str] = None
 
     @model_validator(mode="after")
     def _non_empty(self) -> "GCSSettings":
-        """Ensure all GCS fields are non-empty, raising a helpful error otherwise."""
-        missing = [
-            name for name, val in (
-                ("GCS_BUCKET", self.bucket),
-                ("GCS_CREDENTIALS_PATH", self.credentials_path),
-            ) if not str(val).strip()
-        ]
-        if missing:
-            raise ValueError(f"Missing required GCS settings: {', '.join(missing)}")
+        """Ensure the bucket name is non-empty."""
+        if not self.bucket.strip():
+            raise ValueError("Missing required GCS setting: GCS_BUCKET")
         return self
 
 
@@ -239,7 +237,7 @@ class Config(BaseModel):
         elif strategy == StorageStrategy.GCS.value:
             gcs_settings = GCSSettings(
                 bucket=os.environ.get("GCS_BUCKET", ""),
-                credentials_path=os.environ.get("GCS_CREDENTIALS_PATH", ""),
+                credentials_path=os.environ.get("GCS_CREDENTIALS_PATH") or None,
             )
         elif strategy == StorageStrategy.AZURE.value:
             azure_settings = AzureSettings(
