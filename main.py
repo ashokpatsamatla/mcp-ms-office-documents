@@ -8,15 +8,23 @@ from pptx_tools import create_presentation
 from email_tools import create_eml
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
 from pathlib import Path
-import logging
 from config import get_config
 from xml_tools import create_xml_file
+from middleware import ApiKeyAuthMiddleware
 
+import logging
 mcp = FastMCP("MCP Office Documents")
 
 # Initialize config and logging
 config = get_config()
 logger = logging.getLogger(__name__)
+
+# Register API key auth middleware (only when API_KEY is set)
+if config.api_key:
+    mcp.add_middleware(ApiKeyAuthMiddleware(expected_key=config.api_key))
+    logger.info("[auth] API key authentication enabled")
+else:
+    logger.info("[auth] No API_KEY set – authentication disabled")
 
 # Look for dynamic email templates in production and local locations.
 # Production (container): /app/config/email_templates.yaml

@@ -22,6 +22,11 @@ import os
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field, ValidationError, model_validator
+from dotenv import load_dotenv
+
+# Load .env file if present (local development). Existing env vars are NOT
+# overwritten, so in Docker (where env_file sets them) this is a safe no-op.
+load_dotenv()
 
 
 class LogLevel(str, Enum):
@@ -193,6 +198,10 @@ class Config(BaseModel):
     """Top-level configuration container used by the whole application."""
     logging: LoggingSettings
     storage: StorageSettings
+    api_key: Optional[str] = Field(
+        default=None,
+        description="API key for authenticating incoming requests. None means no auth.",
+    )
 
     @staticmethod
     def _parse_bool(value: Optional[str]) -> bool:
@@ -268,8 +277,11 @@ class Config(BaseModel):
             minio=minio_settings,
         )
 
+        # API key authentication (optional – empty/missing means no auth)
+        raw_api_key = (os.environ.get("API_KEY") or "").strip() or None
+
         try:
-            return cls(logging=logging_settings, storage=storage_settings)
+            return cls(logging=logging_settings, storage=storage_settings, api_key=raw_api_key)
         except ValidationError as e:
             # Wrap Pydantic validation errors in a simpler exception for callers
             raise ValueError(f"Invalid configuration: {e}")
