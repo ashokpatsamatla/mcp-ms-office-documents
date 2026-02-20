@@ -76,16 +76,14 @@ def parse_inline_formatting(text, paragraph, bold=False, italic=False):
         bold: Whether the current context is bold (for nested formatting)
         italic: Whether the current context is italic (for nested formatting)
     """
-    global _escape_counter
-    _escape_map.clear()
-    _escape_counter = 0
-    text = handle_escapes(text)
+    escape_ctx = {"map": {}, "counter": 0}
+    text = _handle_escapes(text, escape_ctx)
 
     line_parts = text.split('  \n')
     for line_idx, line_part in enumerate(line_parts):
         if not line_part and line_idx == len(line_parts) - 1:
             continue
-        _parse_formatting_segment(line_part, paragraph, bold, italic)
+        _parse_formatting_segment(line_part, paragraph, bold, italic, escape_ctx)
         if line_idx < len(line_parts) - 1:
             paragraph.add_run().add_break()
 
@@ -109,70 +107,62 @@ _INLINE_FORMAT_RE = re.compile(
 )
 
 
-def _parse_formatting_segment(text, paragraph, bold=False, italic=False):
+def _parse_formatting_segment(text, paragraph, bold=False, italic=False, escape_ctx=None):
     """Parse a single text segment for inline markdown formatting."""
     for part in _INLINE_FORMAT_RE.split(text):
         if not part:
             continue
         if part.startswith('***') and part.endswith('***') and len(part) > 6:
-            _parse_formatting_segment(part[3:-3], paragraph, bold=True, italic=True)
+            _parse_formatting_segment(part[3:-3], paragraph, bold=True, italic=True, escape_ctx=escape_ctx)
         elif part.startswith('**') and part.endswith('**'):
-            _parse_formatting_segment(part[2:-2], paragraph, bold=True, italic=italic)
+            _parse_formatting_segment(part[2:-2], paragraph, bold=True, italic=italic, escape_ctx=escape_ctx)
         elif part.startswith('~~') and part.endswith('~~'):
-            run = paragraph.add_run(_restore_escapes(part[2:-2]))
+            run = paragraph.add_run(_restore_escapes(part[2:-2], escape_ctx))
             run.font.strike = True
             _apply_formatting(run, bold, italic)
         elif part.startswith('__') and part.endswith('__') and not part.startswith('___'):
-            run = paragraph.add_run(_restore_escapes(part[2:-2]))
+            run = paragraph.add_run(_restore_escapes(part[2:-2], escape_ctx))
             run.font.underline = True
             _apply_formatting(run, bold, italic)
         elif part.startswith('*') and part.endswith('*') and not part.startswith('**'):
-            _parse_formatting_segment(part[1:-1], paragraph, bold=bold, italic=True)
+            _parse_formatting_segment(part[1:-1], paragraph, bold=bold, italic=True, escape_ctx=escape_ctx)
         elif part.startswith('`') and part.endswith('`'):
-            run = paragraph.add_run(_restore_escapes(part[1:-1]))
+            run = paragraph.add_run(_restore_escapes(part[1:-1], escape_ctx))
             run.font.name = 'Courier New'
             _apply_formatting(run, bold, italic)
         elif part.startswith('[') and '](' in part and part.endswith(')'):
             link_match = re.match(r'\[(.*?)]\((.*?)\)', part)
             if link_match:
-                link_text = _restore_escapes(link_match.group(1))
-                link_url = _restore_escapes(link_match.group(2))
+                link_text = _restore_escapes(link_match.group(1), escape_ctx)
+                link_url = _restore_escapes(link_match.group(2), escape_ctx)
                 add_hyperlink(paragraph, link_text, link_url)
         else:
-            _apply_formatting(paragraph.add_run(_restore_escapes(part)), bold, italic)
+            _apply_formatting(paragraph.add_run(_restore_escapes(part, escape_ctx)), bold, italic)
 
 
-# Module-level escape map: PUA character -> original literal character.
-# Populated by handle_escapes(), consumed by _restore_escapes(), cleared
-# at the start of each parse_inline_formatting() call.
-_escape_map: dict[str, str] = {}
-_escape_counter: int = 0
-
-
-def handle_escapes(text):
+def _handle_escapes(text, escape_ctx):
     """Replace backslash-escaped characters with PUA placeholders.
 
     The placeholders survive through the formatting regex so that escaped
     characters (e.g. ``\\*``) are **not** treated as markdown markers.
     Call :func:`_restore_escapes` on final text before inserting into runs.
     """
-    global _escape_counter
 
     def _replace(match):
-        global _escape_counter
-        placeholder = chr(0xE000 + _escape_counter)
-        _escape_map[placeholder] = match.group(1)
-        _escape_counter += 1
+        placeholder = chr(0xE000 + escape_ctx["counter"])
+        escape_ctx["map"][placeholder] = match.group(1)
+        escape_ctx["counter"] += 1
         return placeholder
 
     return re.sub(r'\\(.)', _replace, text)
 
 
-def _restore_escapes(text):
+def _restore_escapes(text, escape_ctx):
     """Replace PUA placeholders back with their original literal characters."""
-    if not _escape_map:
+    esc_map = escape_ctx["map"] if escape_ctx else {}
+    if not esc_map:
         return text
-    for placeholder, char in _escape_map.items():
+    for placeholder, char in esc_map.items():
         text = text.replace(placeholder, char)
     return text
 

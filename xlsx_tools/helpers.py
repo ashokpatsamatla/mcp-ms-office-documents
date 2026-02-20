@@ -133,7 +133,7 @@ def adjust_formula_references(
                 sr = current_excel_row + start_offset
                 er = current_excel_row + end_offset
             qs = _quote_sheet_name(sheet)
-            return f"={func_name}({qs}!{start_col}{sr}:{qs}!{end_col}{er})"
+            return f"{func_name}({qs}!{start_col}{sr}:{qs}!{end_col}{er})"
 
         formula = re.sub(cs_func_pattern, _replace_cs_func, formula)
 
@@ -246,7 +246,7 @@ def adjust_formula_references(
                 start_row = current_excel_row + start_offset
                 end_row = current_excel_row + end_offset
 
-            return f"={func_name}({start_col}{start_row}:{end_col}{end_row})"
+            return f"{func_name}({start_col}{start_row}:{end_col}{end_row})"
 
         adjusted = re.sub(table_func_pattern, replace_table_function, adjusted)
 

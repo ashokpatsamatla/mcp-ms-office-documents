@@ -355,7 +355,7 @@ class TestAdjustFormulaReferencesUnit:
             "=Sales!T1.SUM(B[0]:D[0])", 10, {}, all_positions
         )
         # T1 starts at row 3, data[0] → row 4
-        assert result == "==SUM(Sales!B4:Sales!D4)"
+        assert result == "=SUM(Sales!B4:Sales!D4)"
 
     def test_local_reference_still_works(self):
         from xlsx_tools.helpers import adjust_formula_references
