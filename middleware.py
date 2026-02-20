@@ -13,6 +13,7 @@ Supported header formats (checked in order):
 from __future__ import annotations
 
 import logging
+import secrets
 from typing import Optional
 
 from fastmcp.server.middleware import Middleware, MiddlewareContext
@@ -78,7 +79,7 @@ class ApiKeyAuthMiddleware(Middleware):
         headers = get_http_headers() or {}
         api_key = self._extract_key(headers)
 
-        if api_key != self.expected_key:
+        if api_key is None or not secrets.compare_digest(api_key, self.expected_key):
             logger.warning(
                 "Rejected request %s – invalid or missing API key",
                 context.method,
