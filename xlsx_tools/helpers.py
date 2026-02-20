@@ -84,15 +84,101 @@ def apply_cell_formatting(cell, formatting_info: Dict[str, bool]) -> None:
         cell.font = Font(name='Courier New', color=current_font.color, size=current_font.size)
 
 
-def adjust_formula_references(formula: str, current_excel_row: int, table_positions: Optional[Dict[str, int]] = None) -> str:
-    """Convert row-relative references [offset] and table references T1.B[1] to actual Excel row numbers."""
+def _quote_sheet_name(name: str) -> str:
+    """Return the sheet name quoted for Excel if it contains spaces or special chars."""
+    if re.search(r"[^A-Za-z0-9_]", name):
+        return f"'{name}'"
+    return name
+
+
+def adjust_formula_references(
+    formula: str,
+    current_excel_row: int,
+    table_positions: Optional[Dict[str, int]] = None,
+    all_sheet_table_positions: Optional[Dict[str, Dict[str, int]]] = None,
+) -> str:
+    """Convert row-relative references [offset] and table references T1.B[1] to actual Excel row numbers.
+
+    Also resolves cross-sheet references like ``SheetName!T1.B[0]`` → ``'SheetName'!B2``.
+    """
     if not formula.startswith('='):
         return formula
 
     if table_positions is None:
         table_positions = {}
+    if all_sheet_table_positions is None:
+        all_sheet_table_positions = {}
 
     try:
+        # ── Cross-sheet references (must be resolved BEFORE local patterns) ──
+
+        # Cross-sheet function: SheetName!T1.SUM(B[0]:E[0])
+        cs_func_pattern = r"([\w\s.]+)!T(\d+)\.(SUM|AVERAGE|MAX|MIN)\(([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]\)"
+
+        def _replace_cs_func(match):
+            sheet = match.group(1).strip()
+            table_num = int(match.group(2))
+            func_name = match.group(3)
+            start_col = match.group(4)
+            start_offset = int(match.group(5))
+            end_col = match.group(6)
+            end_offset = int(match.group(7))
+            key = f"T{table_num}"
+            sheet_positions = all_sheet_table_positions.get(sheet, {})
+            if key in sheet_positions:
+                ts = sheet_positions[key]
+                sr = ts + 1 + start_offset
+                er = ts + 1 + end_offset
+            else:
+                sr = current_excel_row + start_offset
+                er = current_excel_row + end_offset
+            qs = _quote_sheet_name(sheet)
+            return f"{func_name}({qs}!{start_col}{sr}:{qs}!{end_col}{er})"
+
+        formula = re.sub(cs_func_pattern, _replace_cs_func, formula)
+
+        # Cross-sheet range: SheetName!T1.B[0]:T1.E[0]
+        cs_range_pattern = r"([\w\s.]+)!T(\d+)\.([A-Z]+)\[([+-]?\d+)\]:T(\d+)\.([A-Z]+)\[([+-]?\d+)\]"
+
+        def _replace_cs_range(match):
+            sheet = match.group(1).strip()
+            st_num = int(match.group(2))
+            start_col = match.group(3)
+            start_offset = int(match.group(4))
+            et_num = int(match.group(5))
+            end_col = match.group(6)
+            end_offset = int(match.group(7))
+            sheet_positions = all_sheet_table_positions.get(sheet, {})
+            sk = f"T{st_num}"
+            ek = f"T{et_num}"
+            sr = (sheet_positions[sk] + 1 + start_offset) if sk in sheet_positions else (current_excel_row + start_offset)
+            er = (sheet_positions[ek] + 1 + end_offset) if ek in sheet_positions else (current_excel_row + end_offset)
+            qs = _quote_sheet_name(sheet)
+            return f"{qs}!{start_col}{sr}:{end_col}{er}"
+
+        formula = re.sub(cs_range_pattern, _replace_cs_range, formula)
+
+        # Cross-sheet single cell: SheetName!T1.B[0]
+        cs_cell_pattern = r"([\w\s.]+)!T(\d+)\.([A-Z]+)\[([+-]?\d+)\]"
+
+        def _replace_cs_cell(match):
+            sheet = match.group(1).strip()
+            table_num = int(match.group(2))
+            column = match.group(3)
+            offset = int(match.group(4))
+            key = f"T{table_num}"
+            sheet_positions = all_sheet_table_positions.get(sheet, {})
+            if key in sheet_positions:
+                actual_row = sheet_positions[key] + 1 + offset
+            else:
+                actual_row = current_excel_row + offset
+            qs = _quote_sheet_name(sheet)
+            return f"{qs}!{column}{actual_row}"
+
+        formula = re.sub(cs_cell_pattern, _replace_cs_cell, formula)
+
+        # ── Local (same-sheet) references ──
+
         # Table cell references e.g. T1.B[1]
         table_pattern = r'T(\d+)\.([A-Z]+)\[([+-]?\d+)\]'
 
@@ -160,7 +246,7 @@ def adjust_formula_references(formula: str, current_excel_row: int, table_positi
                 start_row = current_excel_row + start_offset
                 end_row = current_excel_row + end_offset
 
-            return f"={func_name}({start_col}{start_row}:{end_col}{end_row})"
+            return f"{func_name}({start_col}{start_row}:{end_col}{end_row})"
 
         adjusted = re.sub(table_func_pattern, replace_table_function, adjusted)
 
@@ -229,7 +315,8 @@ def add_table_to_sheet(
     table_data: List[List[str]],
     worksheet,
     start_row: int,
-    table_positions: Optional[Dict[str, int]] = None
+    table_positions: Optional[Dict[str, int]] = None,
+    all_sheet_table_positions: Optional[Dict[str, Dict[str, int]]] = None,
 ) -> int:
     """Add table data to Excel worksheet with proper formatting and formula support."""
     if not table_data:
@@ -251,7 +338,7 @@ def add_table_to_sheet(
                 formula_value = detect_formula_pattern(clean_text)
 
                 if isinstance(formula_value, str) and formula_value.startswith('='):
-                    adjusted_formula = adjust_formula_references(formula_value, current_excel_row, table_positions)
+                    adjusted_formula = adjust_formula_references(formula_value, current_excel_row, table_positions, all_sheet_table_positions)
                     cell.value = adjusted_formula
                     cell.fill = formula_fill
                 else:
