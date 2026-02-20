@@ -1,7 +1,7 @@
 import io
 import logging
 import re
-from typing import List
+from typing import List, Dict, Tuple
 from openpyxl import Workbook
 
 from upload_tools import upload_file
@@ -15,28 +15,92 @@ logger = logging.getLogger(__name__)
 # Pattern for multi-sheet heading: ## Sheet: Name
 SHEET_HEADING_PATTERN = re.compile(r'^##\s+Sheet:\s+(.+)$')
 
+DEFAULT_SHEET_NAME = "Data Report"
+
+
+def _scan_table_positions(lines: List[str]) -> Dict[str, Dict[str, int]]:
+    """Pass 1 – dry-run scan to discover every table position on every sheet.
+
+    Returns ``all_sheet_table_positions``: a mapping of
+    ``{sheet_name: {"T1": start_row, "T2": start_row, ...}}``.
+    No workbook is created – we only simulate row advancement.
+    """
+    all_positions: Dict[str, Dict[str, int]] = {}
+
+    current_sheet = DEFAULT_SHEET_NAME
+    current_row = 1
+    table_counter = 1
+    first_sheet_named = False
+    all_positions[current_sheet] = {}
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        if not line:
+            i += 1
+            continue
+
+        sheet_match = SHEET_HEADING_PATTERN.match(line)
+        if sheet_match:
+            sheet_name = sheet_match.group(1).strip()
+            if not first_sheet_named and current_row == 1:
+                # Rename the default virtual sheet
+                all_positions[sheet_name] = all_positions.pop(current_sheet)
+                current_sheet = sheet_name
+            else:
+                current_sheet = sheet_name
+                current_row = 1
+                table_counter = 1
+                all_positions.setdefault(current_sheet, {})
+            first_sheet_named = True
+            i += 1
+            continue
+
+        if line.startswith('#'):
+            current_row += 2  # header + spacing
+            i += 1
+
+        elif line.startswith('|'):
+            table_data, i = parse_table(lines, i)
+            if table_data:
+                table_key = f"T{table_counter}"
+                all_positions[current_sheet][table_key] = current_row
+                current_row += len(table_data) + 2  # rows + spacing
+                table_counter += 1
+        else:
+            i += 1
+
+    return all_positions
+
 
 def markdown_to_excel(markdown_content: str) -> str:
     """Convert Markdown to Excel workbook (focused on tables and headers).
 
     Always starts from an empty Workbook (no templates).
     Supports multiple sheets via '## Sheet: Name' headings.
+    Supports cross-sheet references via ``SheetName!T1.B[0]`` syntax.
     """
     logger.info("Starting markdown_to_excel conversion")
 
-    # Create a fresh workbook (no templates)
+    # Split content into lines
+    lines: List[str] = markdown_content.split('\n')
+
+    # ── Pass 1: discover all table positions across all sheets ──
+    all_sheet_table_positions = _scan_table_positions(lines)
+    logger.debug("Table positions (all sheets): %s", all_sheet_table_positions)
+
+    # ── Pass 2: create the actual workbook ──
     wb = Workbook()
     ws = wb.active
 
     # Set default worksheet title
     try:
-        ws.title = "Data Report"
+        ws.title = DEFAULT_SHEET_NAME
     except Exception:
-        # Some Excel title errors may occur if title invalid; ignore and keep default
         logger.debug("Could not set worksheet title; keeping default")
 
-    # Split content into lines
-    lines: List[str] = markdown_content.split('\n')
+    current_sheet_name = DEFAULT_SHEET_NAME
 
     # Counters for a short summary
     headers_count = 0
@@ -45,7 +109,7 @@ def markdown_to_excel(markdown_content: str) -> str:
     # Per-sheet state
     current_row = 1
     table_counter = 1
-    table_positions = {}  # Track where each table starts
+    table_positions: Dict[str, int] = {}  # Track where each table starts
     first_sheet_named = False  # Whether we've set a name for the first sheet
     i = 0
 
@@ -74,6 +138,7 @@ def markdown_to_excel(markdown_content: str) -> str:
                     current_row = 1
                     table_counter = 1
                     table_positions = {}
+                current_sheet_name = sheet_name
                 first_sheet_named = True
                 i += 1
                 continue
@@ -111,7 +176,10 @@ def markdown_to_excel(markdown_content: str) -> str:
 
                     # Process the table
                     start_row_before = current_row
-                    current_row = add_table_to_sheet(table_data, ws, current_row, table_positions)
+                    current_row = add_table_to_sheet(
+                        table_data, ws, current_row, table_positions,
+                        all_sheet_table_positions=all_sheet_table_positions,
+                    )
                     _row_count = current_row - start_row_before - 2  # subtract header and spacing
 
                     tables_count += 1

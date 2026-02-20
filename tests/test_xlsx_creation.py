@@ -173,6 +173,207 @@ class TestMultiSheet:
         assert wb.sheetnames[0] == "Data Report"
 
 
+class TestCrossSheetReferences:
+    """Tests for cross-sheet cell references via SheetName!T1.B[0] syntax."""
+
+    def test_simple_cross_sheet_reference(self):
+        """A formula on Sheet2 referencing a cell on Sheet1 via SheetName!T1.B[0]."""
+        markdown = """## Sheet: Revenue
+
+| Quarter | Amount |
+|---------|--------|
+| Q1      | 1000   |
+| Q2      | 1200   |
+
+## Sheet: Dashboard
+
+| Metric | Value |
+|--------|-------|
+| Q1 Rev | =Revenue!T1.B[0] |
+| Q2 Rev | =Revenue!T1.B[1] |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb["Dashboard"]
+        # Revenue table starts at row 1 (first sheet, no heading before table)
+        # T1 on Revenue starts at row 1, data row [0] → row 2, data row [1] → row 3
+        # So the formulas should be =Revenue!B2 and =Revenue!B3
+        q1_cell = ws.cell(row=1, column=2)  # header row of Dashboard T1 is row 1
+        q2_cell = ws.cell(row=2, column=2)  # data row 0
+        # Data rows of Dashboard are at row 2, row 3
+        q1_val = ws.cell(row=2, column=2).value
+        q2_val = ws.cell(row=3, column=2).value
+        assert q1_val == "=Revenue!B2", f"Expected =Revenue!B2, got {q1_val}"
+        assert q2_val == "=Revenue!B3", f"Expected =Revenue!B3, got {q2_val}"
+
+    def test_cross_sheet_reference_with_spaces_in_name(self):
+        """Sheet names with spaces get quoted in the Excel formula."""
+        markdown = """## Sheet: Sales Data
+
+| Product | Revenue |
+|---------|---------|
+| Widget  | 5000    |
+
+## Sheet: Summary
+
+| Metric | Value |
+|--------|-------|
+| Total  | =Sales Data!T1.B[0] |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb["Summary"]
+        cell_val = ws.cell(row=2, column=2).value
+        assert cell_val == "='Sales Data'!B2", f"Expected ='Sales Data'!B2, got {cell_val}"
+
+    def test_forward_reference_sheet1_refs_sheet2(self):
+        """Sheet1 formula references Sheet2 that hasn't been parsed yet (forward reference)."""
+        markdown = """## Sheet: Dashboard
+
+| Metric | Value |
+|--------|-------|
+| Total  | =Details!T1.B[0] |
+
+## Sheet: Details
+
+| Item | Amount |
+|------|--------|
+| Rent | 3000   |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb["Dashboard"]
+        cell_val = ws.cell(row=2, column=2).value
+        assert cell_val == "=Details!B2", f"Expected =Details!B2, got {cell_val}"
+
+    def test_cross_sheet_range_reference(self):
+        """Cross-sheet range reference SheetName!T1.B[0]:T1.B[2]."""
+        markdown = """## Sheet: Data
+
+| Name | Score |
+|------|-------|
+| A    | 10    |
+| B    | 20    |
+| C    | 30    |
+
+## Sheet: Summary
+
+| Metric | Value |
+|--------|-------|
+| Total  | =SUM(Data!T1.B[0]:T1.B[2]) |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb["Summary"]
+        cell_val = ws.cell(row=2, column=2).value
+        assert cell_val == "=SUM(Data!B2:B4)", f"Expected =SUM(Data!B2:B4), got {cell_val}"
+
+    def test_mixed_local_and_cross_sheet(self):
+        """Formula mixing local and cross-sheet references."""
+        markdown = """## Sheet: Revenue
+
+| Quarter | Amount |
+|---------|--------|
+| Q1      | 1000   |
+
+## Sheet: Costs
+
+| Quarter | Amount |
+|---------|--------|
+| Q1      | 400    |
+
+## Sheet: Profit
+
+| Quarter | Revenue | Cost | Profit |
+|---------|---------|------|--------|
+| Q1      | =Revenue!T1.B[0] | =Costs!T1.B[0] | =B[0]-C[0] |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb["Profit"]
+        rev_val = ws.cell(row=2, column=2).value
+        cost_val = ws.cell(row=2, column=3).value
+        profit_val = ws.cell(row=2, column=4).value
+        assert rev_val == "=Revenue!B2", f"Expected =Revenue!B2, got {rev_val}"
+        assert cost_val == "=Costs!B2", f"Expected =Costs!B2, got {cost_val}"
+        assert profit_val == "=B2-C2", f"Expected =B2-C2, got {profit_val}"
+
+    def test_cross_sheet_with_header_before_table(self):
+        """Cross-sheet reference where the source sheet has a header before the table."""
+        markdown = """## Sheet: Source
+
+# Monthly Data
+
+| Month | Value |
+|-------|-------|
+| Jan   | 100   |
+| Feb   | 200   |
+
+## Sheet: Target
+
+| Metric | Value |
+|--------|-------|
+| Jan    | =Source!T1.B[0] |
+| Feb    | =Source!T1.B[1] |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb["Target"]
+        # Source: header at row 1, +2 spacing → table starts at row 3
+        # T1 data[0] = row 4, data[1] = row 5
+        jan_val = ws.cell(row=2, column=2).value
+        feb_val = ws.cell(row=3, column=2).value
+        assert jan_val == "=Source!B4", f"Expected =Source!B4, got {jan_val}"
+        assert feb_val == "=Source!B5", f"Expected =Source!B5, got {feb_val}"
+
+
+class TestAdjustFormulaReferencesUnit:
+    """Unit tests for adjust_formula_references with cross-sheet support."""
+
+    def test_cross_sheet_single_cell(self):
+        from xlsx_tools.helpers import adjust_formula_references
+        all_positions = {"Revenue": {"T1": 1}}
+        result = adjust_formula_references(
+            "=Revenue!T1.B[0]", 10, {}, all_positions
+        )
+        assert result == "=Revenue!B2"
+
+    def test_cross_sheet_quoted_name(self):
+        from xlsx_tools.helpers import adjust_formula_references
+        all_positions = {"My Sheet": {"T1": 1}}
+        result = adjust_formula_references(
+            "=My Sheet!T1.A[2]", 10, {}, all_positions
+        )
+        assert result == "='My Sheet'!A4"
+
+    def test_cross_sheet_range(self):
+        from xlsx_tools.helpers import adjust_formula_references
+        all_positions = {"Data": {"T1": 1}}
+        result = adjust_formula_references(
+            "=SUM(Data!T1.B[0]:T1.B[4])", 10, {}, all_positions
+        )
+        assert result == "=SUM(Data!B2:B6)"
+
+    def test_cross_sheet_function_pattern(self):
+        from xlsx_tools.helpers import adjust_formula_references
+        all_positions = {"Sales": {"T1": 3}}
+        result = adjust_formula_references(
+            "=Sales!T1.SUM(B[0]:D[0])", 10, {}, all_positions
+        )
+        # T1 starts at row 3, data[0] → row 4
+        assert result == "==SUM(Sales!B4:Sales!D4)"
+
+    def test_local_reference_still_works(self):
+        from xlsx_tools.helpers import adjust_formula_references
+        result = adjust_formula_references(
+            "=T1.B[0]", 5, {"T1": 1}, {}
+        )
+        assert result == "=B2"
+
+    def test_mixed_local_and_cross_sheet(self):
+        from xlsx_tools.helpers import adjust_formula_references
+        all_positions = {"Revenue": {"T1": 1}}
+        result = adjust_formula_references(
+            "=Revenue!T1.B[0]-B[0]", 5, {"T1": 3}, all_positions
+        )
+        # Revenue!T1.B[0] → Revenue!B2, B[0] → B4 (current table starts at 3, data[0] = row 4)
+        assert result == "=Revenue!B2-B4"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
 
