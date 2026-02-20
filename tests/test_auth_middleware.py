@@ -212,6 +212,65 @@ class TestOnRequest:
 
         mock_compare.assert_called_once_with("secret-123", "secret-123")
 
+    async def test_failed_attempt_increments_counter(self):
+        """Each auth failure should increment the internal counter."""
+        mw = ApiKeyAuthMiddleware("secret-123")
+        call_next = AsyncMock()
+        context = _make_context()
+
+        assert mw._failed_attempts == 0
+
+        with patch("middleware.get_http_headers", return_value={"x-api-key": "wrong"}):
+            with pytest.raises(AuthorizationError):
+                await mw.on_request(context, call_next)
+
+        # First failure triggers a WARNING which resets counter to 0
+        # so after one reject the counter is 0 (just emitted warning)
+        assert mw._failed_attempts == 0
+        assert mw._last_warn_time > 0
+
+    async def test_throttled_warning_not_emitted_within_interval(self):
+        """WARNING should NOT fire again within the throttle window."""
+        mw = ApiKeyAuthMiddleware("secret-123")
+        call_next = AsyncMock()
+        context = _make_context()
+
+        # Simulate that a warning was just emitted
+        import time as _time
+        mw._last_warn_time = _time.monotonic()
+
+        with patch("middleware.get_http_headers", return_value={}), \
+             patch("middleware.logger") as mock_logger:
+            with pytest.raises(AuthorizationError):
+                await mw.on_request(context, call_next)
+
+        # DEBUG is always emitted
+        mock_logger.debug.assert_called_once()
+        # WARNING should NOT be emitted (within interval)
+        mock_logger.warning.assert_not_called()
+        # Counter should have incremented without reset
+        assert mw._failed_attempts == 1
+
+    async def test_throttled_warning_emitted_after_interval(self):
+        """WARNING should fire again once the throttle window has elapsed."""
+        mw = ApiKeyAuthMiddleware("secret-123")
+        call_next = AsyncMock()
+        context = _make_context()
+
+        # Pretend the last warning was long ago
+        mw._last_warn_time = 0.0
+        mw._failed_attempts = 5  # accumulated silently
+
+        with patch("middleware.get_http_headers", return_value={}), \
+             patch("middleware.logger") as mock_logger:
+            with pytest.raises(AuthorizationError):
+                await mw.on_request(context, call_next)
+
+        # WARNING should have been emitted (interval elapsed)
+        mock_logger.warning.assert_called_once()
+        # Counter should reset after warning
+        assert mw._failed_attempts == 0
+
 
 # ======================================================================
 # Config integration

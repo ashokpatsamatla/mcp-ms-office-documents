@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from typing import Optional
 
 from fastmcp.server.middleware import Middleware, MiddlewareContext
@@ -38,10 +39,16 @@ class ApiKeyAuthMiddleware(Middleware):
     an ``McpError`` (error code ``-32001``).
     """
 
+    # Throttle window (seconds) for WARNING-level auth failure messages
+    # to avoid log flooding from brute-force or misconfigured clients.
+    _WARN_INTERVAL_SECONDS: float = 60.0
+
     def __init__(self, expected_key: str) -> None:
         if not expected_key:
             raise ValueError("ApiKeyAuthMiddleware requires a non-empty expected_key")
         self.expected_key = expected_key
+        self._failed_attempts: int = 0
+        self._last_warn_time: float = 0.0
 
     # ------------------------------------------------------------------
     # Key extraction
@@ -80,10 +87,22 @@ class ApiKeyAuthMiddleware(Middleware):
         api_key = self._extract_key(headers)
 
         if api_key is None or not secrets.compare_digest(api_key, self.expected_key):
-            logger.warning(
-                "Rejected request %s – invalid or missing API key",
-                context.method,
-            )
+            self._failed_attempts += 1
+            now = time.monotonic()
+
+            # Always log at DEBUG (cheap, only visible when debug is on)
+            logger.debug("Auth failure on %s (attempt #%d)", context.method, self._failed_attempts)
+
+            # Throttled WARNING: emit at most once per interval
+            if now - self._last_warn_time >= self._WARN_INTERVAL_SECONDS:
+                logger.warning(
+                    "Rejected %d auth attempt(s) in the last %.0fs",
+                    self._failed_attempts,
+                    self._WARN_INTERVAL_SECONDS,
+                )
+                self._failed_attempts = 0
+                self._last_warn_time = now
+
             raise AuthorizationError("Unauthorized – invalid or missing API key")
 
         return await call_next(context)
