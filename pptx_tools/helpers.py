@@ -433,6 +433,9 @@ class ImageHelperMixin:
         except (ImageDownloadError, ImageValidationError) as e:
             logger.error(f"Failed to download image: {e}")
             return None
+        except Exception as e:
+            logger.error(f"Failed to add image from URL '{image_url}': {e}", exc_info=True)
+            return None
 
     def _add_image_placeholder(self, slide, message: str, left: int, top: int, width: int):
         """Add a placeholder text when image cannot be loaded.

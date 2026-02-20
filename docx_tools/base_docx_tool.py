@@ -21,12 +21,16 @@ def markdown_to_word(markdown_content):
     path = load_templates()
 
     # Create document with or without template
-    if path:
-        logger.debug(f"Using Word template at: {path}")
-        doc = Document(path)
-    else:
-        doc = Document()  # Create blank document if no template
-        logger.warning("No template found, creating blank document")
+    try:
+        if path:
+            logger.debug(f"Using Word template at: {path}")
+            doc = Document(path)
+        else:
+            doc = Document()  # Create blank document if no template
+            logger.warning("No template found, creating blank document")
+    except Exception as e:
+        logger.error("Failed to load Word template '%s': %s", path, e, exc_info=True)
+        raise RuntimeError(f"Error loading Word template: {e}") from e
 
     # Split content into lines, but preserve line breaks within paragraphs
     lines = markdown_content.split('\n')
@@ -147,7 +151,7 @@ def markdown_to_word(markdown_content):
 
     except Exception as e:
         logger.error(f"Error in parsing markdown: {e}", exc_info=True)
-        return f"Error in parsing markdown: {e}"
+        raise RuntimeError(f"Error in parsing markdown: {e}") from e
 
     # Save the document to BytesIO and upload
     try:
@@ -166,4 +170,4 @@ def markdown_to_word(markdown_content):
         return result
     except Exception as e:
         logger.error(f"Error saving/uploading Word document: {e}", exc_info=True)
-        return f"Error saving/uploading Word document: {e}"
+        raise RuntimeError(f"Error saving/uploading Word document: {e}") from e

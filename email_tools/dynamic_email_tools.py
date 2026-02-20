@@ -9,19 +9,19 @@ Updated assumptions:
 from __future__ import annotations
 
 import io
+import yaml
+import pystache
+import logging
 from email.mime.text import MIMEText
 from email import encoders
 from pathlib import Path
 from typing import Any, Dict, Optional, Literal
-
-import yaml
-import pystache
 from pydantic import Field, create_model
 from fastmcp import FastMCP
-import logging
-
 from upload_tools import upload_file
 from template_utils import find_email_template
+from fastmcp.exceptions import ToolError
+
 
 __all__ = ["register_email_template_tools_from_yaml"]
 
@@ -118,46 +118,53 @@ def register_email_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> No
 
             def make_tool_fn(_model=model, _html=html_source, _renderer=renderer, _name=name):
                 def tool_impl(data):
-                    payload = data.model_dump()
-                    safe_payload = {k: ("" if v is None else v) for k, v in payload.items()}
-
-                    if "promo_code" in safe_payload and "promo_code_block" not in safe_payload:
-                        promo_val = safe_payload.get("promo_code")
-                        safe_payload["promo_code_block"] = (
-                            f"<div class=\"promo\">Use promo code <strong>{promo_val}</strong>.</div>" if promo_val else ""
-                        )
                     try:
-                        html_rendered = _renderer.render(_html, safe_payload)
-                    except Exception as e:  # pragma: no cover
-                        logger.error(f"[dynamic-email] Error rendering template {_name}: {e}")
-                        return f"Error rendering template {_name}: {e}"
+                        payload = data.model_dump()
+                        safe_payload = {k: ("" if v is None else v) for k, v in payload.items()}
 
-                    # Mirror static create_eml: single HTML body base64 encoded.
-                    msg = MIMEText(html_rendered, 'html', 'utf-8')
-                    encoders.encode_base64(msg)  # sets proper Content-Transfer-Encoding and encodes payload
+                        if "promo_code" in safe_payload and "promo_code_block" not in safe_payload:
+                            promo_val = safe_payload.get("promo_code")
+                            safe_payload["promo_code_block"] = (
+                                f"<div class=\"promo\">Use promo code <strong>{promo_val}</strong>.</div>" if promo_val else ""
+                            )
+                        try:
+                            html_rendered = _renderer.render(_html, safe_payload)
+                        except Exception as e:  # pragma: no cover
+                            logger.error(f"[dynamic-email] Error rendering template {_name}: {e}")
+                            raise ToolError(f"Error rendering template {_name}: {e}")
 
-                    subject = str(safe_payload.get("subject", ""))
-                    if subject:
-                        msg['Subject'] = subject
-                    for hdr in ("To", "Cc", "Bcc"):
-                        key = hdr.lower()
-                        val = safe_payload.get(key)
-                        if isinstance(val, list) and val:
-                            msg[hdr] = ", ".join(val)
-                        elif isinstance(val, str) and val:
-                            msg[hdr] = val
-                    msg['X-Unsent'] = '1'
+                        # Mirror static create_eml: single HTML body base64 encoded.
+                        msg = MIMEText(html_rendered, 'html', 'utf-8')
+                        encoders.encode_base64(msg)  # sets proper Content-Transfer-Encoding and encodes payload
 
-                    buffer = io.BytesIO()
-                    try:
-                        buffer.write(msg.as_bytes())
-                        buffer.seek(0)
-                        return upload_file(buffer, "eml")
-                    except Exception as e:  # pragma: no cover
-                        logger.error(f"[dynamic-email] Error creating email draft for template '{_name}': {e}")
-                        return f"Error creating email draft for template '{_name}': {e}"
-                    finally:
-                        buffer.close()
+                        subject = str(safe_payload.get("subject", ""))
+                        if subject:
+                            msg['Subject'] = subject
+                        for hdr in ("To", "Cc", "Bcc"):
+                            key = hdr.lower()
+                            val = safe_payload.get(key)
+                            if isinstance(val, list) and val:
+                                msg[hdr] = ", ".join(val)
+                            elif isinstance(val, str) and val:
+                                msg[hdr] = val
+                        msg['X-Unsent'] = '1'
+
+                        buffer = io.BytesIO()
+                        try:
+                            buffer.write(msg.as_bytes())
+                            buffer.seek(0)
+                            return upload_file(buffer, "eml")
+                        except Exception as e:  # pragma: no cover
+                            logger.error(f"[dynamic-email] Error creating email draft for template '{_name}': {e}")
+                            raise ToolError(f"Error creating email draft for template '{_name}': {e}")
+                        finally:
+                            buffer.close()
+
+                    except ToolError:
+                        raise
+                    except Exception as e:
+                        logger.error(f"[dynamic-email] Unexpected error in tool '{_name}': {e}", exc_info=True)
+                        raise ToolError(f"Error generating email from template '{_name}': {e}")
 
                 tool_impl.__annotations__['data'] = _model  # type: ignore[index]
                 tool_impl.__annotations__['return'] = str  # type: ignore[index]

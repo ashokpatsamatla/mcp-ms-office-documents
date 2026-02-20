@@ -92,119 +92,124 @@ def adjust_formula_references(formula: str, current_excel_row: int, table_positi
     if table_positions is None:
         table_positions = {}
 
-    # Table cell references e.g. T1.B[1]
-    table_pattern = r'T(\d+)\.([A-Z]+)\[([+-]?\d+)\]'
+    try:
+        # Table cell references e.g. T1.B[1]
+        table_pattern = r'T(\d+)\.([A-Z]+)\[([+-]?\d+)\]'
 
-    def replace_table_reference(match):
-        table_num = int(match.group(1))
-        column = match.group(2)
-        offset = int(match.group(3))
-        table_key = f"T{table_num}"
-        if table_key in table_positions:
-            table_start_row = table_positions[table_key]
-            actual_row = table_start_row + 1 + offset
-            return f"{column}{actual_row}"
-        actual_row = current_excel_row + offset
-        return f"{column}{actual_row}"
-
-    adjusted = re.sub(table_pattern, replace_table_reference, formula)
-
-    # Table range references e.g. T1.B[0]:T1.E[0]
-    table_range_pattern = r'T(\d+)\.([A-Z]+)\([+-]?\d+\):T(\d+)\.([A-Z]+)\([+-]?\d+\)'
-
-    # Corrected with brackets
-    table_range_pattern = r'T(\d+)\.([A-Z]+)\[([+-]?\d+)\]:T(\d+)\.([A-Z]+)\[([+-]?\d+)\]'
-
-    def replace_table_range(match):
-        start_table_num = int(match.group(1))
-        start_col = match.group(2)
-        start_offset = int(match.group(3))
-        end_table_num = int(match.group(4))
-        end_col = match.group(5)
-        end_offset = int(match.group(6))
-
-        start_key = f"T{start_table_num}"
-        end_key = f"T{end_table_num}"
-
-        if start_key in table_positions:
-            start_table_row = table_positions[start_key]
-            start_row = start_table_row + 1 + start_offset
-        else:
-            start_row = current_excel_row + start_offset
-
-        if end_key in table_positions:
-            end_table_row = table_positions[end_key]
-            end_row = end_table_row + 1 + end_offset
-        else:
-            end_row = current_excel_row + end_offset
-
-        return f"{start_col}{start_row}:{end_col}{end_row}"
-
-    adjusted = re.sub(table_range_pattern, replace_table_range, adjusted)
-
-    # Simplified function over table range e.g. T1.SUM(B[0]:E[0])
-    table_func_pattern = r'T(\d+)\.(SUM|AVERAGE|MAX|MIN)\(([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]\)'
-
-    def replace_table_function(match):
-        table_num = int(match.group(1))
-        func_name = match.group(2)
-        start_col = match.group(3)
-        start_offset = int(match.group(4))
-        end_col = match.group(5)
-        end_offset = int(match.group(6))
-
-        key = f"T{table_num}"
-        if key in table_positions:
-            table_start_row = table_positions[key]
-            start_row = table_start_row + 1 + start_offset
-            end_row = table_start_row + 1 + end_offset
-        else:
-            start_row = current_excel_row + start_offset
-            end_row = current_excel_row + end_offset
-
-        return f"={func_name}({start_col}{start_row}:{end_col}{end_row})"
-
-    adjusted = re.sub(table_func_pattern, replace_table_function, adjusted)
-
-    # Determine current table start for relative references
-    current_table_start = None
-    for table_key, table_start_row in table_positions.items():
-        if table_start_row <= current_excel_row:
-            current_table_start = table_start_row
-
-    # Handle row-relative references e.g. B[0]
-    rel_pattern = r'([A-Z]+)\[([+-]?\d+)\]'
-
-    def replace_rel(match):
-        column = match.group(1)
-        offset = int(match.group(2))
-        if current_table_start is not None:
-            actual_row = current_table_start + 1 + offset
-        else:
+        def replace_table_reference(match):
+            table_num = int(match.group(1))
+            column = match.group(2)
+            offset = int(match.group(3))
+            table_key = f"T{table_num}"
+            if table_key in table_positions:
+                table_start_row = table_positions[table_key]
+                actual_row = table_start_row + 1 + offset
+                return f"{column}{actual_row}"
             actual_row = current_excel_row + offset
-        return f"{column}{actual_row}"
+            return f"{column}{actual_row}"
 
-    adjusted = re.sub(rel_pattern, replace_rel, adjusted)
+        adjusted = re.sub(table_pattern, replace_table_reference, formula)
 
-    # Row-relative range e.g. B[0]:E[0]
-    range_pattern = r'([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]'
+        # Table range references e.g. T1.B[0]:T1.E[0]
+        table_range_pattern = r'T(\d+)\.([A-Z]+)\([+-]?\d+\):T(\d+)\.([A-Z]+)\([+-]?\d+\)'
 
-    def replace_range(match):
-        start_col = match.group(1)
-        start_offset = int(match.group(2))
-        end_col = match.group(3)
-        end_offset = int(match.group(4))
-        if current_table_start is not None:
-            start_row = current_table_start + 1 + start_offset
-            end_row = current_table_start + 1 + end_offset
-        else:
-            start_row = current_excel_row + start_offset
-            end_row = current_excel_row + end_offset
-        return f"{start_col}{start_row}:{end_col}{end_row}"
+        # Corrected with brackets
+        table_range_pattern = r'T(\d+)\.([A-Z]+)\[([+-]?\d+)\]:T(\d+)\.([A-Z]+)\[([+-]?\d+)\]'
 
-    adjusted = re.sub(range_pattern, replace_range, adjusted)
+        def replace_table_range(match):
+            start_table_num = int(match.group(1))
+            start_col = match.group(2)
+            start_offset = int(match.group(3))
+            end_table_num = int(match.group(4))
+            end_col = match.group(5)
+            end_offset = int(match.group(6))
 
-    return adjusted
+            start_key = f"T{start_table_num}"
+            end_key = f"T{end_table_num}"
+
+            if start_key in table_positions:
+                start_table_row = table_positions[start_key]
+                start_row = start_table_row + 1 + start_offset
+            else:
+                start_row = current_excel_row + start_offset
+
+            if end_key in table_positions:
+                end_table_row = table_positions[end_key]
+                end_row = end_table_row + 1 + end_offset
+            else:
+                end_row = current_excel_row + end_offset
+
+            return f"{start_col}{start_row}:{end_col}{end_row}"
+
+        adjusted = re.sub(table_range_pattern, replace_table_range, adjusted)
+
+        # Simplified function over table range e.g. T1.SUM(B[0]:E[0])
+        table_func_pattern = r'T(\d+)\.(SUM|AVERAGE|MAX|MIN)\(([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]\)'
+
+        def replace_table_function(match):
+            table_num = int(match.group(1))
+            func_name = match.group(2)
+            start_col = match.group(3)
+            start_offset = int(match.group(4))
+            end_col = match.group(5)
+            end_offset = int(match.group(6))
+
+            key = f"T{table_num}"
+            if key in table_positions:
+                table_start_row = table_positions[key]
+                start_row = table_start_row + 1 + start_offset
+                end_row = table_start_row + 1 + end_offset
+            else:
+                start_row = current_excel_row + start_offset
+                end_row = current_excel_row + end_offset
+
+            return f"={func_name}({start_col}{start_row}:{end_col}{end_row})"
+
+        adjusted = re.sub(table_func_pattern, replace_table_function, adjusted)
+
+        # Determine current table start for relative references
+        current_table_start = None
+        for table_key, table_start_row in table_positions.items():
+            if table_start_row <= current_excel_row:
+                current_table_start = table_start_row
+
+        # Handle row-relative references e.g. B[0]
+        rel_pattern = r'([A-Z]+)\[([+-]?\d+)\]'
+
+        def replace_rel(match):
+            column = match.group(1)
+            offset = int(match.group(2))
+            if current_table_start is not None:
+                actual_row = current_table_start + 1 + offset
+            else:
+                actual_row = current_excel_row + offset
+            return f"{column}{actual_row}"
+
+        adjusted = re.sub(rel_pattern, replace_rel, adjusted)
+
+        # Row-relative range e.g. B[0]:E[0]
+        range_pattern = r'([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]'
+
+        def replace_range(match):
+            start_col = match.group(1)
+            start_offset = int(match.group(2))
+            end_col = match.group(3)
+            end_offset = int(match.group(4))
+            if current_table_start is not None:
+                start_row = current_table_start + 1 + start_offset
+                end_row = current_table_start + 1 + end_offset
+            else:
+                start_row = current_excel_row + start_offset
+                end_row = current_excel_row + end_offset
+            return f"{start_col}{start_row}:{end_col}{end_row}"
+
+        adjusted = re.sub(range_pattern, replace_range, adjusted)
+
+        return adjusted
+
+    except Exception as e:
+        logger.warning("Failed to adjust formula references for '%s': %s", formula, e)
+        return formula
 
 
 def detect_formula_pattern(value: str) -> str:
@@ -243,36 +248,39 @@ def add_table_to_sheet(
     for row_idx, row_data in enumerate(table_data):
         current_excel_row = start_row + row_idx
         for col_idx, cell_text in enumerate(row_data):
-            cell = worksheet.cell(row=current_excel_row, column=col_idx + 1)
-            clean_text, formatting_info = parse_cell_formatting(cell_text)
-            formula_value = detect_formula_pattern(clean_text)
+            try:
+                cell = worksheet.cell(row=current_excel_row, column=col_idx + 1)
+                clean_text, formatting_info = parse_cell_formatting(cell_text)
+                formula_value = detect_formula_pattern(clean_text)
 
-            if isinstance(formula_value, str) and formula_value.startswith('='):
-                adjusted_formula = adjust_formula_references(formula_value, current_excel_row, table_positions)
-                cell.value = adjusted_formula
-                cell.fill = formula_fill
-            else:
-                formatted_value = format_cell_value(clean_text)
-                cell.value = formatted_value
+                if isinstance(formula_value, str) and formula_value.startswith('='):
+                    adjusted_formula = adjust_formula_references(formula_value, current_excel_row, table_positions)
+                    cell.value = adjusted_formula
+                    cell.fill = formula_fill
+                else:
+                    formatted_value = format_cell_value(clean_text)
+                    cell.value = formatted_value
 
-            apply_cell_formatting(cell, formatting_info)
-            cell.border = border
+                apply_cell_formatting(cell, formatting_info)
+                cell.border = border
 
-            # Alignment and number formats
-            if row_idx == 0:
-                cell.alignment = Alignment(horizontal='center')
-            elif isinstance(cell.value, (int, float)) or (isinstance(cell.value, str) and cell.value.startswith('=')):
-                cell.alignment = Alignment(horizontal='right')
-            else:
-                cell.alignment = Alignment(horizontal='left')
+                # Alignment and number formats
+                if row_idx == 0:
+                    cell.alignment = Alignment(horizontal='center')
+                elif isinstance(cell.value, (int, float)) or (isinstance(cell.value, str) and cell.value.startswith('=')):
+                    cell.alignment = Alignment(horizontal='right')
+                else:
+                    cell.alignment = Alignment(horizontal='left')
 
-            if row_idx == 0:
-                cell.font = header_font
-                cell.fill = header_fill
-            elif isinstance(cell.value, float) and 0 < cell.value <= 1:
-                cell.number_format = '0.00%'
-            elif isinstance(cell.value, (int, float)) and cell.value >= 1000:
-                cell.number_format = '#,##0'
+                if row_idx == 0:
+                    cell.font = header_font
+                    cell.fill = header_fill
+                elif isinstance(cell.value, float) and 0 < cell.value <= 1:
+                    cell.number_format = '0.00%'
+                elif isinstance(cell.value, (int, float)) and cell.value >= 1000:
+                    cell.number_format = '#,##0'
+            except Exception as e:
+                logger.warning("Error processing cell [row=%d, col=%d]: %s", current_excel_row, col_idx + 1, e)
 
     # Column widths
     for col_idx in range(len(table_data[0]) if table_data else 0):
