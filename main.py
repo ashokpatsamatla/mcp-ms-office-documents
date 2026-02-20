@@ -92,12 +92,12 @@ class PowerPointSlide(BaseModel):
 
 @mcp.tool(
     name="create_excel_from_markdown",
-    description="Converts markdown content with tables and formulas to Excel (.xlsx) format.",
+    description="Converts markdown content with tables and formulas to Excel (.xlsx) format. Use '## Sheet: Name' headings to create multiple sheets.",
     tags={"excel", "spreadsheet", "data"},
     annotations={"title": "Markdown to Excel Converter"}
 )
 async def create_excel_document(
-    markdown_content: Annotated[str, Field(description="Markdown content containing tables, headers, and formulas. Use T1.B[0] for cross-table references and B[0] for current row references. ALWAYS use [0], [1], [2] notation, NEVER use absolute row numbers like B2, B3. Do NOT count table header as first row, first row has index [0]. Supports cell formatting: **bold**, *italic*.")]
+    markdown_content: Annotated[str, Field(description="Markdown content containing tables, headers, and formulas. Use '## Sheet: Sheet Name' to create multiple worksheets. Use T1.B[0] for cross-table references and B[0] for current row references. ALWAYS use [0], [1], [2] notation, NEVER use absolute row numbers like B2, B3. Do NOT count table header as first row, first row has index [0]. Supports cell formatting: **bold**, *italic*.")]
 ) -> str:
     """
     Converts markdown to Excel with advanced formula support.
@@ -115,12 +115,51 @@ async def create_excel_document(
 
 @mcp.tool(
     name="create_word_from_markdown",
-    description="Converts markdown content to Word (.docx) format. Supports headers, tables, lists, formatting, hyperlinks, and block quotes.",
+    description="Converts markdown content to a professionally formatted Word (.docx) document. Supports headings, lists, tables, images, block quotes, page breaks, horizontal lines, text alignment, and rich inline formatting.",
     tags={"word", "document", "text", "legal", "contract"},
     annotations={"title": "Markdown to Word Converter"}
 )
 async def create_word_document(
-    markdown_content: Annotated[str, Field(description="Markdown content. For LEGAL CONTRACTS use numbered lists (1., 2., 3.) for sections and nested lists for provisions - DO NOT use headers (except for contract title). For other documents use headers (# ## ###).")]
+    markdown_content: Annotated[str, Field(description=(
+        "Markdown content for the document body. Separate all block elements with blank lines.\n"
+        "\n"
+        "BLOCK ELEMENTS (each on its own line):\n"
+        "- Headings: # H1, ## H2, ### H3, #### H4, ##### H5, ###### H6\n"
+        "- Unordered lists: - item (or * or +); nest with 3-space indent\n"
+        "- Ordered lists: 1. item, 2. item; nest with 3-space indent\n"
+        "- Tables: | H1 | H2 |\\n|---|---|\\n| C1 | C2 | (cells support inline formatting)\n"
+        "- Block quotes: > text (supports inline formatting)\n"
+        "- Page break: --- (three+ dashes alone on a line — starts new page)\n"
+        "- Horizontal line: *** (three+ asterisks alone on a line — visual separator)\n"
+        "- Images: ![alt text](url)\n"
+        "\n"
+        "INLINE FORMATTING (usable in paragraphs, headings, lists, tables, quotes):\n"
+        "- **bold**, *italic*, ***bold italic***\n"
+        "- ~~strikethrough~~, __underline__ (double underscore — NOT bold)\n"
+        "- `code` (Courier New font)\n"
+        "- [link text](https://url)\n"
+        "- Nesting: **bold with *italic* inside**, *italic with **bold** inside*\n"
+        "- Combinations: **~~bold strikethrough~~**, **__bold underline__**, *~~italic strikethrough~~*\n"
+        "- Escaped literals: \\* \\** \\` to render *, **, ` without formatting\n"
+        "\n"
+        "TEXT ALIGNMENT (HTML tags):\n"
+        "- <center>text</center> or multi-line: <center>\\nline1\\nline2\\n</center>\n"
+        "- <div align=\"right|center|justify|left\">text</div> (single or multi-line)\n"
+        "\n"
+        "LINE BREAKS: End a line with two trailing spaces for a soft break within the same paragraph.\n"
+        "\n"
+        "CONVENTIONS:\n"
+        "- Do NOT confuse --- (page break) with *** (horizontal line).\n"
+        "- Do NOT confuse __underline__ with bold; always use **bold** for bold.\n"
+        "- LEGAL CONTRACTS: use numbered lists (1., 2., 3.) for clauses, nested lists for provisions; use headings only for the contract title.\n"
+        "- Other documents: use headings (# ## ###) to organize sections.\n"
+    ))],
+    title: Annotated[Optional[str], Field(description="Document title (shown in file properties)", default=None)] = None,
+    author: Annotated[Optional[str], Field(description="Document author name (shown in file properties)", default=None)] = None,
+    subject: Annotated[Optional[str], Field(description="Document subject/description (shown in file properties)", default=None)] = None,
+    header_text: Annotated[Optional[str], Field(description="Text for document header (top of every page). Use {page} for auto page number, {pages} for total pages.", default=None)] = None,
+    footer_text: Annotated[Optional[str], Field(description="Text for document footer (bottom of every page). Use {page} for auto page number, {pages} for total pages.", default=None)] = None,
+    include_toc: Annotated[Optional[bool], Field(description="If true, inserts a Table of Contents at the beginning of the document. The TOC updates automatically when opened in Word.", default=False)] = False,
 ) -> str:
     """
     Converts markdown to professionally formatted Word document.
@@ -130,7 +169,15 @@ async def create_word_document(
     logger.info("Converting markdown to Word document")
 
     try:
-        result = markdown_to_word(markdown_content)
+        result = markdown_to_word(
+            markdown_content,
+            title=title,
+            author=author,
+            subject=subject,
+            header_text=header_text,
+            footer_text=footer_text,
+            include_toc=include_toc or False,
+        )
         logger.info("Word document uploaded successfully")
         return result
     except Exception as e:

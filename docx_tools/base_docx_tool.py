@@ -10,12 +10,22 @@ from .helpers import (
     parse_table,
     add_table_to_doc,
     process_list_items,
+    add_horizontal_line,
+    add_image_to_doc,
+    IMAGE_PATTERN,
+    PAGE_BREAK_PATTERN,
+    HORIZONTAL_LINE_PATTERN,
+    detect_alignment,
+    process_alignment_block,
+    set_header_footer,
+    add_toc,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def markdown_to_word(markdown_content):
+def markdown_to_word(markdown_content, title=None, author=None, subject=None,
+                     header_text=None, footer_text=None, include_toc=False):
     """Convert Markdown to Word document."""
     logger.info("Starting markdown_to_word conversion")
     path = load_templates()
@@ -31,6 +41,24 @@ def markdown_to_word(markdown_content):
     except Exception as e:
         logger.error("Failed to load Word template '%s': %s", path, e, exc_info=True)
         raise RuntimeError(f"Error loading Word template: {e}") from e
+
+    # Set document metadata
+    if title:
+        doc.core_properties.title = title
+    if author:
+        doc.core_properties.author = author
+    if subject:
+        doc.core_properties.subject = subject
+
+    # Insert Table of Contents if requested (before main content)
+    if include_toc:
+        add_toc(doc)
+
+    # Set header and footer
+    if header_text:
+        set_header_footer(doc, header_text, 'header')
+    if footer_text:
+        set_header_footer(doc, footer_text, 'footer')
 
     # Split content into lines, but preserve line breaks within paragraphs
     lines = markdown_content.split('\n')
@@ -123,17 +151,40 @@ def markdown_to_word(markdown_content):
                     logger.debug(f"Added table with {len(table_data)} rows")
 
             elif re.match(r'^\d+\.\s+', line):
-                i = process_list_items(lines, i, doc, True, 0)
+                i, _ = process_list_items(lines, i, doc, True, 0)
                 ordered_lists += 1
 
             elif re.match(r'^[-*+]\s+', line):
-                i = process_list_items(lines, i, doc, False, 0)
+                i, _ = process_list_items(lines, i, doc, False, 0)
                 unordered_lists += 1
 
-            elif line.startswith('---') or line.startswith('***'):
-                doc.add_paragraph()
+            elif PAGE_BREAK_PATTERN.match(line):
+                # Page break
+                doc.add_page_break()
+                i += 1
+
+            elif HORIZONTAL_LINE_PATTERN.match(line):
+                # Horizontal line
+                add_horizontal_line(doc)
                 paragraphs_count += 1
                 i += 1
+
+            elif (img_match := IMAGE_PATTERN.match(line)):
+                alt_text, url = img_match.groups()
+                add_image_to_doc(doc, url, alt_text)
+                paragraphs_count += 1
+                i += 1
+
+            elif (align_result := detect_alignment(line)) is not None:
+                inner, alignment = align_result
+                if inner is not None:
+                    paragraph = doc.add_paragraph()
+                    paragraph.alignment = alignment
+                    parse_inline_formatting(inner, paragraph)
+                    paragraphs_count += 1
+                    i += 1
+                else:
+                    i, _ = process_alignment_block(lines, i + 1, doc, alignment, return_elements=False)
 
             elif line.startswith('>'):
                 quote_text = line[1:].strip()

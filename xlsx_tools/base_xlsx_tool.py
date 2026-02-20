@@ -1,5 +1,6 @@
 import io
 import logging
+import re
 from typing import List
 from openpyxl import Workbook
 
@@ -11,11 +12,15 @@ from .helpers import (
 
 logger = logging.getLogger(__name__)
 
+# Pattern for multi-sheet heading: ## Sheet: Name
+SHEET_HEADING_PATTERN = re.compile(r'^##\s+Sheet:\s+(.+)$')
+
 
 def markdown_to_excel(markdown_content: str) -> str:
     """Convert Markdown to Excel workbook (focused on tables and headers).
 
     Always starts from an empty Workbook (no templates).
+    Supports multiple sheets via '## Sheet: Name' headings.
     """
     logger.info("Starting markdown_to_excel conversion")
 
@@ -23,7 +28,7 @@ def markdown_to_excel(markdown_content: str) -> str:
     wb = Workbook()
     ws = wb.active
 
-    # Set worksheet title
+    # Set default worksheet title
     try:
         ws.title = "Data Report"
     except Exception:
@@ -37,9 +42,11 @@ def markdown_to_excel(markdown_content: str) -> str:
     headers_count = 0
     tables_count = 0
 
+    # Per-sheet state
     current_row = 1
     table_counter = 1
     table_positions = {}  # Track where each table starts
+    first_sheet_named = False  # Whether we've set a name for the first sheet
     i = 0
 
     try:
@@ -48,6 +55,26 @@ def markdown_to_excel(markdown_content: str) -> str:
 
             # Skip empty lines
             if not line:
+                i += 1
+                continue
+
+            # Check for sheet heading: ## Sheet: Name
+            sheet_match = SHEET_HEADING_PATTERN.match(line)
+            if sheet_match:
+                sheet_name = sheet_match.group(1).strip()
+                if not first_sheet_named and current_row == 1:
+                    # Rename the default sheet instead of creating a new one
+                    try:
+                        ws.title = sheet_name
+                    except Exception:
+                        logger.debug("Could not rename worksheet to '%s'", sheet_name)
+                else:
+                    # Create a new worksheet
+                    ws = wb.create_sheet(title=sheet_name)
+                    current_row = 1
+                    table_counter = 1
+                    table_positions = {}
+                first_sheet_named = True
                 i += 1
                 continue
 

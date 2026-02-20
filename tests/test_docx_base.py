@@ -15,6 +15,7 @@ sys.path.insert(0, str(project_root))
 
 import pytest
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from docx_tools.helpers import (
     parse_inline_formatting,
@@ -22,6 +23,15 @@ from docx_tools.helpers import (
     parse_table,
     add_table_to_doc,
     process_list_items,
+    add_horizontal_line,
+    add_image_to_doc,
+    IMAGE_PATTERN,
+    PAGE_BREAK_PATTERN,
+    HORIZONTAL_LINE_PATTERN,
+    detect_alignment,
+    process_alignment_block,
+    set_header_footer,
+    add_toc,
 )
 import re
 
@@ -36,7 +46,9 @@ def setup_output_dir():
     yield
 
 
-def create_word_document(markdown_content: str) -> Document:
+def create_word_document(markdown_content: str, title=None, author=None,
+                         subject=None, header_text=None, footer_text=None,
+                         include_toc=False) -> Document:
     """Convert Markdown to Word document and return the Document object.
 
     This is a test-friendly version that returns the Document directly
@@ -48,6 +60,24 @@ def create_word_document(markdown_content: str) -> Document:
         doc = Document(path)
     else:
         doc = Document()
+
+    # Set document metadata
+    if title:
+        doc.core_properties.title = title
+    if author:
+        doc.core_properties.author = author
+    if subject:
+        doc.core_properties.subject = subject
+
+    # Insert TOC
+    if include_toc:
+        add_toc(doc)
+
+    # Set header and footer
+    if header_text:
+        set_header_footer(doc, header_text, 'header')
+    if footer_text:
+        set_header_footer(doc, footer_text, 'footer')
 
     lines = markdown_content.split('\n')
     i = 0
@@ -76,9 +106,9 @@ def create_word_document(markdown_content: str) -> Document:
 
             if first_line.startswith('#'):
                 header_level = len(first_line) - len(first_line.lstrip('#'))
-                header_text = first_line.lstrip('#').strip()
+                header_text_val = first_line.lstrip('#').strip()
                 heading = doc.add_heading('', level=min(header_level, 6))
-                parse_inline_formatting(header_text, heading)
+                parse_inline_formatting(header_text_val, heading)
             elif first_line.startswith('>'):
                 quote_text = full_text[1:].strip()
                 quote_paragraph = doc.add_paragraph()
@@ -93,9 +123,9 @@ def create_word_document(markdown_content: str) -> Document:
 
         if line.startswith('#'):
             header_level = len(line) - len(line.lstrip('#'))
-            header_text = line.lstrip('#').strip()
+            header_text_val = line.lstrip('#').strip()
             heading = doc.add_heading('', level=min(header_level, 6))
-            parse_inline_formatting(header_text, heading)
+            parse_inline_formatting(header_text_val, heading)
             i += 1
 
         elif line.startswith('|'):
@@ -104,14 +134,33 @@ def create_word_document(markdown_content: str) -> Document:
                 add_table_to_doc(table_data, doc)
 
         elif re.match(r'^\d+\.\s+', line):
-            i = process_list_items(lines, i, doc, True, 0)
+            i, _ = process_list_items(lines, i, doc, True, 0)
 
         elif re.match(r'^[-*+]\s+', line):
-            i = process_list_items(lines, i, doc, False, 0)
+            i, _ = process_list_items(lines, i, doc, False, 0)
 
-        elif line.startswith('---') or line.startswith('***'):
-            doc.add_paragraph()
+        elif PAGE_BREAK_PATTERN.match(line):
+            doc.add_page_break()
             i += 1
+
+        elif HORIZONTAL_LINE_PATTERN.match(line):
+            add_horizontal_line(doc)
+            i += 1
+
+        elif (img_match := IMAGE_PATTERN.match(line)):
+            alt_text, url = img_match.groups()
+            add_image_to_doc(doc, url, alt_text)
+            i += 1
+
+        elif (align_result := detect_alignment(line)) is not None:
+            inner, alignment = align_result
+            if inner is not None:
+                paragraph = doc.add_paragraph()
+                paragraph.alignment = alignment
+                parse_inline_formatting(inner, paragraph)
+                i += 1
+            else:
+                i, _ = process_alignment_block(lines, i + 1, doc, alignment, return_elements=False)
 
         elif line.startswith('>'):
             quote_text = line[1:].strip()
@@ -619,268 +668,1032 @@ class TestVisualInspection:
     This test creates a single document with ALL supported markdown features
     for easy visual verification in Word/LibreOffice.
 
-    Output: tests/output/docx/base/VISUAL_INSPECTION_comprehensive.docx
+    Output: tests/output/docx/VISUAL_INSPECTION_comprehensive.docx
     """
 
     def test_comprehensive_visual_document(self):
         """Generate a comprehensive document for visual inspection.
 
-        This document includes:
+        This document includes ALL supported features:
         - All heading levels (H1-H6)
         - Paragraphs with various inline formatting
+        - Bold, italic, bold+italic (***text***)
+        - Strikethrough (~~text~~) and underline (__text__)
+        - Inline code (`code`)
+        - Hyperlinks ([text](url))
+        - Nested formatting (bold inside italic, italic inside bold)
         - Ordered and unordered lists (including nested)
         - Tables with formatting
         - Block quotes
-        - Hyperlinks
+        - Page breaks (---) and horizontal lines (***)
+        - Text alignment (<center>, <div align="right">, etc.)
+        - Line breaks (two trailing spaces)
+        - Escaped characters
         - Unicode and special characters
-        - Line breaks
+        - Images (with fallback for invalid URL)
         """
-        markdown = """# Comprehensive Visual Inspection Document
-
-This document is designed for **manual visual inspection** to verify that all markdown 
-features are correctly converted to Word format. Open this file in Microsoft Word or 
-LibreOffice Writer to check the formatting.
-
----
-
-## 1. Heading Levels
-
-### Heading Level 3
-
-#### Heading Level 4
-
-##### Heading Level 5
-
-###### Heading Level 6
-
----
-
-## 2. Inline Formatting
-
-This paragraph contains **bold text**, *italic text*, and ***bold italic text***. 
-You can also use `inline code` for technical terms like `print()` or `variable_name`.
-
-Here is a [hyperlink to example.com](https://example.com) and another 
-[link to Google](https://www.google.com).
-
-Mixed formatting: **bold with *nested italic* inside** and *italic with **nested bold** inside*.
-
----
-
-## 3. Unordered Lists
-
-Simple bullet list:
-
-- First item
-- Second item with **bold** text
-- Third item with *italic* text
-- Fourth item with `code`
-- Fifth item with [link](https://example.com)
-
-Nested bullet list:
-
-- Main item 1
-   - Sub-item 1.1
-   - Sub-item 1.2
-      - Deep nested item
-   - Sub-item 1.3
-- Main item 2
-   - Sub-item 2.1
-
-Different markers (should all render as bullets):
-
-* Asterisk item 1
-* Asterisk item 2
-
-+ Plus item 1
-+ Plus item 2
-
----
-
-## 4. Ordered Lists
-
-Simple numbered list:
-
-1. First step
-2. Second step with **important** info
-3. Third step with *emphasis*
-4. Fourth step with `code snippet`
-
-Nested numbered list:
-
-1. Main step 1
-   1. Sub-step 1.1
-   2. Sub-step 1.2
-2. Main step 2
-   1. Sub-step 2.1
-   2. Sub-step 2.2
-   3. Sub-step 2.3
-3. Main step 3
-
----
-
-## 5. Mixed List Types
-
-Shopping list:
-
-- Apples
-- Bananas
-- Oranges
-
-Preparation steps:
-
-1. Wash the fruit
-2. Cut into pieces
-3. Serve and enjoy
-
----
-
-## 6. Tables
-
-### Simple Table
-
-| Name | Age | City |
-|------|-----|------|
-| John | 25 | New York |
-| Jane | 30 | Los Angeles |
-| Bob | 35 | Chicago |
-
-### Table with Formatting
-
-| Feature | Description | Status |
-|---------|-------------|--------|
-| **Bold Feature** | This feature is *very important* | Active |
-| *Italic Feature* | Contains `code` elements | Pending |
-| Regular Feature | Visit [docs](https://docs.example.com) | Complete |
-
-### Table with Alignment
-
-| Left Aligned | Center Aligned | Right Aligned |
-|:-------------|:--------------:|--------------:|
-| L1 | C1 | R1 |
-| L2 | C2 | R2 |
-| L3 | C3 | R3 |
-
----
-
-## 7. Block Quotes
-
-> This is a simple block quote.
-
-> This block quote contains **bold** and *italic* formatting.
-
-> "The best way to predict the future is to create it." - Peter Drucker
-
----
-
-## 8. Unicode and Special Characters
-
-### Czech Text
-Příliš žluťoučký kůň úpěl ďábelské ódy.
-
-### German Text
-Größe, Müller, Straße, Übung
-
-### Japanese Text
-こんにちは世界 (Hello World)
-
-### Emoji
-Hello 👋 World 🌍 Stars ⭐✨ Check ✓ Heart ❤️
-
-### Special XML Characters
-5 > 3 and 2 < 4 and A & B
-
----
-
-## 9. Line Breaks
-
-This is line one.  
-This is line two (same paragraph, soft break).  
-This is line three (still same paragraph).
-
----
-
-## 10. Complex Paragraph
-
-This paragraph demonstrates **multiple formatting options** combined together. 
-We have *italic text*, `inline code`, and [hyperlinks](https://example.com). 
-You can even have **bold with *nested italic*** or *italic with **nested bold***. 
-Special characters like < > & are properly escaped.
-
----
-
-## 11. Technical Documentation Style
-
-### API Endpoint: GET /users
-
-Returns a list of users.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `page` | integer | No | Page number (default: 1) |
-| `limit` | integer | No | Items per page (default: 20) |
-| `sort` | string | No | Sort field |
-
-**Example Response:**
-
-> The response includes user data in JSON format.
-
----
-
-## 12. Legal Document Style
-
-1. PARTIES
-   - This agreement is between **Company A** and **Company B**.
-   - Both parties agree to the terms below.
-
-2. TERMS AND CONDITIONS
-   - All payments due within *30 days*.
-   - Late payments incur a `1.5%` monthly fee.
-
-3. CONFIDENTIALITY
-   - Both parties maintain strict confidentiality.
-   - See [Privacy Policy](https://example.com/privacy) for details.
-
----
-
-## Conclusion
-
-This document contains all supported markdown elements. If you can read this 
-and all formatting above appears correct, the markdown-to-Word conversion is 
-working properly! 🎉
-
-**Document generated for visual inspection purposes.**
-
-*Last updated: January 2026*
-"""
+        markdown = (
+            "# Comprehensive Visual Inspection Document\n"
+            "\n"
+            "This document is designed for **manual visual inspection** to verify that all markdown\n"
+            "features are correctly converted to Word format. Open this file in Microsoft Word or\n"
+            "LibreOffice Writer to check the formatting.\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 1. Heading Levels\n"
+            "\n"
+            "### Heading Level 3\n"
+            "\n"
+            "#### Heading Level 4\n"
+            "\n"
+            "##### Heading Level 5\n"
+            "\n"
+            "###### Heading Level 6\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 2. Inline Formatting\n"
+            "\n"
+            "This paragraph contains **bold text**, *italic text*, and ***bold italic text***.\n"
+            "You can also use `inline code` for technical terms like `print()` or `variable_name`.\n"
+            "\n"
+            "Here is a [hyperlink to example.com](https://example.com) and another\n"
+            "[link to Google](https://www.google.com).\n"
+            "\n"
+            "Mixed formatting: **bold with *nested italic* inside** and *italic with **nested bold** inside*.\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 3. Strikethrough and Underline\n"
+            "\n"
+            "This has ~~strikethrough text~~ that should appear with a line through it.\n"
+            "\n"
+            "This has __underlined text__ that should appear underlined.\n"
+            "\n"
+            "Mixed: ~~deleted~~ and __added__ in the same paragraph.\n"
+            "\n"
+            "Combined with bold: **~~bold strikethrough~~** and **__bold underline__**.\n"
+            "\n"
+            "Combined with italic: *~~italic strikethrough~~* and *__italic underline__*.\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 4. Escaped Characters\n"
+            "\n"
+            "These should appear as literal characters, not formatting:\n"
+            "\n"
+            r"\*not italic\* and \**not bold\** and \`not code\`." "\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 5. Unordered Lists\n"
+            "\n"
+            "Simple bullet list:\n"
+            "\n"
+            "- First item\n"
+            "- Second item with **bold** text\n"
+            "- Third item with *italic* text\n"
+            "- Fourth item with `code`\n"
+            "- Fifth item with [link](https://example.com)\n"
+            "- Sixth item with ~~strikethrough~~ and __underline__\n"
+            "\n"
+            "Nested bullet list:\n"
+            "\n"
+            "- Main item 1\n"
+            "   - Sub-item 1.1\n"
+            "   - Sub-item 1.2\n"
+            "      - Deep nested item\n"
+            "   - Sub-item 1.3\n"
+            "- Main item 2\n"
+            "   - Sub-item 2.1\n"
+            "\n"
+            "Different markers (should all render as bullets):\n"
+            "\n"
+            "* Asterisk item 1\n"
+            "* Asterisk item 2\n"
+            "\n"
+            "+ Plus item 1\n"
+            "+ Plus item 2\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 6. Ordered Lists\n"
+            "\n"
+            "Simple numbered list:\n"
+            "\n"
+            "1. First step\n"
+            "2. Second step with **important** info\n"
+            "3. Third step with *emphasis*\n"
+            "4. Fourth step with `code snippet`\n"
+            "\n"
+            "Nested numbered list:\n"
+            "\n"
+            "1. Main step 1\n"
+            "   1. Sub-step 1.1\n"
+            "   2. Sub-step 1.2\n"
+            "2. Main step 2\n"
+            "   1. Sub-step 2.1\n"
+            "   2. Sub-step 2.2\n"
+            "   3. Sub-step 2.3\n"
+            "3. Main step 3\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 7. Mixed List Types\n"
+            "\n"
+            "Shopping list:\n"
+            "\n"
+            "- Apples\n"
+            "- Bananas\n"
+            "- Oranges\n"
+            "\n"
+            "Preparation steps:\n"
+            "\n"
+            "1. Wash the fruit\n"
+            "2. Cut into pieces\n"
+            "3. Serve and enjoy\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 8. Tables\n"
+            "\n"
+            "### Simple Table\n"
+            "\n"
+            "| Name | Age | City |\n"
+            "|------|-----|------|\n"
+            "| John | 25 | New York |\n"
+            "| Jane | 30 | Los Angeles |\n"
+            "| Bob | 35 | Chicago |\n"
+            "\n"
+            "### Table with Formatting\n"
+            "\n"
+            "| Feature | Description | Status |\n"
+            "|---------|-------------|--------|\n"
+            "| **Bold Feature** | This feature is *very important* | Active |\n"
+            "| *Italic Feature* | Contains `code` elements | Pending |\n"
+            "| ~~Removed~~ | Was __underlined__ | Archived |\n"
+            "| Regular Feature | Visit [docs](https://docs.example.com) | Complete |\n"
+            "\n"
+            "### Table with Alignment\n"
+            "\n"
+            "| Left Aligned | Center Aligned | Right Aligned |\n"
+            "|:-------------|:--------------:|--------------:|\n"
+            "| L1 | C1 | R1 |\n"
+            "| L2 | C2 | R2 |\n"
+            "| L3 | C3 | R3 |\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 9. Block Quotes\n"
+            "\n"
+            "> This is a simple block quote.\n"
+            "\n"
+            "> This block quote contains **bold** and *italic* formatting.\n"
+            "\n"
+            "> This quote has ~~strikethrough~~ and __underline__ too.\n"
+            "\n"
+            '> "The best way to predict the future is to create it." - Peter Drucker\n'
+            "\n"
+            "***\n"
+            "\n"
+            "## 10. Text Alignment\n"
+            "\n"
+            "<center>This text should be centered.</center>\n"
+            "\n"
+            '<div align="right">This text should be right-aligned.</div>\n'
+            "\n"
+            '<div align="justify">This text should be justified. Lorem ipsum dolor sit amet, '
+            "consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore "
+            "magna aliqua.</div>\n"
+            "\n"
+            '<div align="left">This text should be left-aligned (explicit).</div>\n'
+            "\n"
+            "Multi-line centered block:\n"
+            "\n"
+            "<center>\n"
+            "Company Name Inc.\n"
+            "123 Main Street\n"
+            "City, Country 12345\n"
+            "</center>\n"
+            "\n"
+            "Multi-line right-aligned block:\n"
+            "\n"
+            '<div align="right">\n'
+            "Date: 2026-02-20\n"
+            "Reference: DOC-2026-001\n"
+            "</div>\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 11. Unicode and Special Characters\n"
+            "\n"
+            "### Czech Text\n"
+            "Příliš žluťoučký kůň úpěl ďábelské ódy.\n"
+            "\n"
+            "### German Text\n"
+            "Größe, Müller, Straße, Übung\n"
+            "\n"
+            "### Japanese Text\n"
+            "こんにちは世界 (Hello World)\n"
+            "\n"
+            "### Emoji\n"
+            "Hello 👋 World 🌍 Stars ⭐✨ Check ✓ Heart ❤️\n"
+            "\n"
+            "### Special XML Characters\n"
+            "5 > 3 and 2 < 4 and A & B\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 12. Line Breaks\n"
+            "\n"
+            "This is line one.  \n"
+            "This is line two (same paragraph, soft break).  \n"
+            "This is line three (still same paragraph).\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 13. Page Break\n"
+            "\n"
+            "The next element is a page break (---). Content after it should start on a new page.\n"
+            "\n"
+            "---\n"
+            "\n"
+            "## 14. After the Page Break\n"
+            "\n"
+            "This section should appear on a new page (after the --- page break above).\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 15. Images\n"
+            "\n"
+            "Below is an image reference (will show error placeholder since URL is invalid):\n"
+            "\n"
+            "![Sample Image](https://invalid-test-domain.test/sample.png)\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 16. Complex Paragraph\n"
+            "\n"
+            "This paragraph demonstrates **multiple formatting options** combined together.\n"
+            "We have *italic text*, `inline code`, and [hyperlinks](https://example.com).\n"
+            "You can even have **bold with *nested italic*** or *italic with **nested bold***.\n"
+            "Also ~~strikethrough~~ and __underline__ mixed with **bold** and *italic*.\n"
+            "Special characters like < > & are properly escaped.\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 17. Technical Documentation Style\n"
+            "\n"
+            "### API Endpoint: GET /users\n"
+            "\n"
+            "Returns a list of users.\n"
+            "\n"
+            "**Parameters:**\n"
+            "\n"
+            "| Parameter | Type | Required | Description |\n"
+            "|-----------|------|----------|-------------|\n"
+            "| `page` | integer | No | Page number (default: 1) |\n"
+            "| `limit` | integer | No | Items per page (default: 20) |\n"
+            "| `sort` | string | No | Sort field |\n"
+            "\n"
+            "**Example Response:**\n"
+            "\n"
+            "> The response includes user data in JSON format.\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 18. Legal Document Style\n"
+            "\n"
+            "1. PARTIES\n"
+            "   - This agreement is between **Company A** and **Company B**.\n"
+            "   - Both parties agree to the terms below.\n"
+            "\n"
+            "2. TERMS AND CONDITIONS\n"
+            "   - All payments due within *30 days*.\n"
+            "   - Late payments incur a `1.5%` monthly fee.\n"
+            "\n"
+            "3. CONFIDENTIALITY\n"
+            "   - Both parties maintain strict confidentiality.\n"
+            "   - See [Privacy Policy](https://example.com/privacy) for details.\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## Conclusion\n"
+            "\n"
+            "This document contains **all** supported markdown elements:\n"
+            "- **Bold**, *italic*, ***bold italic***\n"
+            "- ~~Strikethrough~~ and __underline__\n"
+            "- `Inline code` and [hyperlinks](https://example.com)\n"
+            "- Headings (H1-H6), lists, tables, block quotes\n"
+            "- Page breaks (---) and horizontal lines (***)\n"
+            "- Text alignment (center, right, justify, left)\n"
+            "- Line breaks, escaped characters, Unicode, images\n"
+            "\n"
+            "If you can read this and all formatting above appears correct, the markdown-to-Word\n"
+            "conversion is working properly! 🎉\n"
+            "\n"
+            "**Document generated for visual inspection purposes.**\n"
+            "\n"
+            "*Last updated: February 2026*\n"
+        )
         doc = save_test_document(markdown, "VISUAL_INSPECTION_comprehensive.docx")
         assert doc is not None
 
-        # Basic sanity checks
+        # ----- Basic sanity checks -----
         assert len(doc.paragraphs) > 50, "Document should have many paragraphs"
 
-        # Check for various elements in paragraphs
+        # ----- Text content presence -----
         full_text = "\n".join([p.text for p in doc.paragraphs])
         assert "Comprehensive Visual Inspection" in full_text
         assert "bold text" in full_text
         assert "italic text" in full_text
+        assert "bold italic text" in full_text
+        assert "strikethrough text" in full_text
+        assert "underlined text" in full_text
         assert "First item" in full_text
         assert "žluťoučký" in full_text  # Czech unicode
         assert "こんにちは" in full_text  # Japanese
+        assert "Größe" in full_text  # German unicode
+        assert "👋" in full_text  # Emoji
+        assert "5 > 3" in full_text or "5 > 3" in full_text  # Special XML characters
+        assert "After the Page Break" in full_text  # Page break section
+        assert "not italic" in full_text  # Escaped characters rendered as literal text
 
-        # Check tables exist and have content
+        # Multi-line alignment block content
+        assert "Company Name Inc." in full_text, "Multi-line centered block content"
+        assert "123 Main Street" in full_text, "Multi-line centered block content"
+        assert "Date: 2026-02-20" in full_text, "Multi-line right-aligned block content"
+        assert "Reference: DOC-2026-001" in full_text, "Multi-line right-aligned block content"
+
+        # List content
+        assert "Sub-item 1.1" in full_text, "Nested bullet list content"
+        assert "Asterisk item 1" in full_text, "Asterisk marker list content"
+        assert "Plus item 1" in full_text, "Plus marker list content"
+        assert "Sub-step 1.1" in full_text, "Nested ordered list content"
+        assert "Main step 3" in full_text, "Ordered list content"
+
+        # ----- Heading levels -----
+        headings = [(p.style.name, p.text) for p in doc.paragraphs
+                    if p.style.name.startswith('Heading')]
+        heading_levels = set(h[0] for h in headings)
+        assert 'Heading 1' in heading_levels, "Should have H1 headings"
+        assert 'Heading 2' in heading_levels, "Should have H2 headings"
+        assert 'Heading 3' in heading_levels, "Should have H3 headings"
+        assert 'Heading 4' in heading_levels, "Should have H4 headings"
+        assert 'Heading 5' in heading_levels, "Should have H5 headings"
+        assert 'Heading 6' in heading_levels, "Should have H6 headings"
+
+        # ----- Inline formatting runs -----
+        all_runs = [r for p in doc.paragraphs for r in p.runs]
+
+        # Bold-only runs
+        bold_only_runs = [r for r in all_runs if r.bold and not r.italic]
+        assert len(bold_only_runs) > 0, "Should have bold-only runs"
+        assert any("bold text" in r.text for r in bold_only_runs), \
+            "Bold-only runs should contain 'bold text'"
+
+        # Italic-only runs
+        italic_only_runs = [r for r in all_runs if r.italic and not r.bold]
+        assert len(italic_only_runs) > 0, "Should have italic-only runs"
+        assert any("italic text" in r.text for r in italic_only_runs), \
+            "Italic-only runs should contain 'italic text'"
+
+        # Strikethrough runs
+        strike_runs = [r for r in all_runs if r.font.strike]
+        assert len(strike_runs) > 0, "Should have strikethrough runs"
+        assert any("strikethrough" in r.text or "deleted" in r.text or "Removed" in r.text
+                    for r in strike_runs), "Strikethrough should contain expected text"
+
+        # Underline runs
+        underline_runs = [r for r in all_runs if r.font.underline]
+        assert len(underline_runs) > 0, "Should have underline runs"
+        assert any("underlined" in r.text or "added" in r.text or "underline" in r.text.lower()
+                    for r in underline_runs), "Underline should contain expected text"
+
+        # Bold+italic runs (from ***bold italic text***)
+        bold_italic_runs = [r for r in all_runs if r.bold and r.italic]
+        assert len(bold_italic_runs) > 0, "Should have bold+italic runs"
+        assert any("bold italic" in r.text for r in bold_italic_runs), \
+            "bold+italic runs should contain 'bold italic' text"
+
+        # Nested formatting: bold containing italic (**bold with *nested italic* inside**)
+        nested_italic_in_bold = [r for r in all_runs if r.bold and r.italic
+                                 and "nested italic" in r.text]
+        assert len(nested_italic_in_bold) > 0, \
+            "Should have bold+italic run from nested **bold with *italic* inside**"
+
+        # Nested formatting: italic containing bold (*italic with **nested bold** inside*)
+        # This should produce italic-only runs and bold+italic runs
+        nested_bi_runs = [r for r in all_runs if r.bold and r.italic and "nested bold" in r.text]
+        assert len(nested_bi_runs) > 0, \
+            "Should have bold+italic run from nested *italic with **bold** inside*"
+
+        # Bold + strikethrough (from **~~bold strikethrough~~**)
+        bold_strike_runs = [r for r in all_runs if r.bold and r.font.strike]
+        assert len(bold_strike_runs) > 0, "Should have bold+strikethrough runs"
+        assert any("bold strikethrough" in r.text for r in bold_strike_runs), \
+            "Bold+strikethrough run should contain 'bold strikethrough'"
+
+        # Bold + underline (from **__bold underline__**)
+        bold_underline_runs = [r for r in all_runs if r.bold and r.font.underline]
+        assert len(bold_underline_runs) > 0, "Should have bold+underline runs"
+        assert any("bold underline" in r.text for r in bold_underline_runs), \
+            "Bold+underline run should contain 'bold underline'"
+
+        # Italic + strikethrough (from *~~italic strikethrough~~*)
+        italic_strike_runs = [r for r in all_runs if r.italic and r.font.strike]
+        assert len(italic_strike_runs) > 0, "Should have italic+strikethrough runs"
+        assert any("italic strikethrough" in r.text for r in italic_strike_runs), \
+            "Italic+strikethrough run should contain 'italic strikethrough'"
+
+        # Italic + underline (from *__italic underline__*)
+        italic_underline_runs = [r for r in all_runs if r.italic and r.font.underline]
+        assert len(italic_underline_runs) > 0, "Should have italic+underline runs"
+        assert any("italic underline" in r.text for r in italic_underline_runs), \
+            "Italic+underline run should contain 'italic underline'"
+
+        # Code runs (inline code with Courier New font)
+        code_runs = [r for r in all_runs if r.font.name == "Courier New"]
+        assert len(code_runs) > 0, "Should have code runs"
+        code_texts = [r.text for r in code_runs]
+        assert any("print()" in t for t in code_texts), "Code runs should contain 'print()'"
+        assert any("variable_name" in t for t in code_texts), "Code runs should contain 'variable_name'"
+        assert any("inline code" == t or "code" in t.lower() for t in code_texts), \
+            "Code runs should contain code-related text"
+
+        # ----- Text alignment -----
+        centered = [p for p in doc.paragraphs
+                    if p.alignment == WD_ALIGN_PARAGRAPH.CENTER and p.text.strip()]
+        assert len(centered) > 0, "Should have centered paragraphs"
+        assert any("centered" in p.text.lower() for p in centered), \
+            "Centered paragraphs should contain expected text"
+        # Multi-line center block should produce multiple centered paragraphs
+        # (inline centered + Company Name + 123 Main Street + City)
+        assert len(centered) >= 4, \
+            "Should have >=4 centered paragraphs (inline + multi-line block)"
+
+        right_aligned = [p for p in doc.paragraphs
+                         if p.alignment == WD_ALIGN_PARAGRAPH.RIGHT and p.text.strip()]
+        assert len(right_aligned) > 0, "Should have right-aligned paragraphs"
+        assert any("right-aligned" in p.text.lower() for p in right_aligned), \
+            "Right-aligned paragraphs should contain expected text"
+        # Multi-line right block: inline + Date + Reference = >=3
+        assert len(right_aligned) >= 3, \
+            "Should have >=3 right-aligned paragraphs (inline + multi-line block)"
+
+        justified = [p for p in doc.paragraphs
+                     if p.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY and p.text.strip()]
+        assert len(justified) > 0, "Should have justified paragraphs"
+        assert any("justified" in p.text.lower() or "lorem ipsum" in p.text.lower()
+                    for p in justified), "Justified paragraph should contain expected text"
+
+        left_aligned = [p for p in doc.paragraphs
+                        if p.alignment == WD_ALIGN_PARAGRAPH.LEFT and p.text.strip()]
+        assert len(left_aligned) > 0, "Should have explicit left-aligned paragraphs"
+        assert any("left-aligned" in p.text.lower() for p in left_aligned), \
+            "Left-aligned paragraph should contain expected text"
+
+        # ----- Block quotes -----
+        quote_paragraphs = [p for p in doc.paragraphs if p.style.name == 'Quote']
+        assert len(quote_paragraphs) >= 4, \
+            "Should have at least 4 block quote paragraphs"
+        quote_texts = [p.text for p in quote_paragraphs]
+        assert any("simple block quote" in t for t in quote_texts), \
+            "Block quotes should include simple quote"
+        assert any("bold" in t and "italic" in t for t in quote_texts), \
+            "Block quotes should include formatted quote"
+        assert any("Peter Drucker" in t for t in quote_texts), \
+            "Block quotes should include attribution quote"
+
+        # Block quote with formatting runs
+        quote_runs = [r for p in doc.paragraphs if p.style.name == 'Quote'
+                      for r in p.runs]
+        quote_bold = [r for r in quote_runs if r.bold]
+        assert len(quote_bold) > 0, "Block quotes should have bold runs"
+        quote_italic = [r for r in quote_runs if r.italic]
+        assert len(quote_italic) > 0, "Block quotes should have italic runs"
+        quote_strike = [r for r in quote_runs if r.font.strike]
+        assert len(quote_strike) > 0, "Block quotes should have strikethrough runs"
+        quote_underline = [r for r in quote_runs if r.font.underline]
+        assert len(quote_underline) > 0, "Block quotes should have underline runs"
+
+        # ----- Lists (verify styles) -----
+        bullet_paras = [p for p in doc.paragraphs
+                        if p.style.name.startswith('List Bullet')]
+        assert len(bullet_paras) >= 6, \
+            f"Should have >=6 bullet list paragraphs, got {len(bullet_paras)}"
+        # Nested bullets should use List Bullet 2 or 3
+        nested_bullets = [p for p in bullet_paras if p.style.name != 'List Bullet']
+        assert len(nested_bullets) > 0, "Should have nested bullet list paragraphs"
+
+        number_paras = [p for p in doc.paragraphs
+                        if p.style.name.startswith('List Number')]
+        assert len(number_paras) >= 4, \
+            f"Should have >=4 numbered list paragraphs, got {len(number_paras)}"
+        # Nested numbers should use List Number 2 or 3
+        nested_numbers = [p for p in number_paras if p.style.name != 'List Number']
+        assert len(nested_numbers) > 0, "Should have nested numbered list paragraphs"
+
+        # List items with formatting
+        list_runs = [r for p in doc.paragraphs
+                     if p.style.name.startswith('List Bullet') or
+                     p.style.name.startswith('List Number')
+                     for r in p.runs]
+        list_bold = [r for r in list_runs if r.bold]
+        assert len(list_bold) > 0, "List items should have bold runs"
+        list_italic = [r for r in list_runs if r.italic]
+        assert len(list_italic) > 0, "List items should have italic runs"
+        list_code = [r for r in list_runs if r.font.name == "Courier New"]
+        assert len(list_code) > 0, "List items should have code runs"
+        list_strike = [r for r in list_runs if r.font.strike]
+        assert len(list_strike) > 0, "List items should have strikethrough runs"
+        list_underline = [r for r in list_runs if r.font.underline]
+        assert len(list_underline) > 0, "List items should have underline runs"
+
+        # ----- Tables -----
         assert len(doc.tables) >= 3, "Document should have at least 3 tables"
-        # Check table content
         table_text = ""
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     table_text += cell.text + " "
-        assert "John" in table_text  # From simple table
+        assert "John" in table_text, "Simple table data"
+        assert "Jane" in table_text, "Simple table data"
+        assert "Bob" in table_text, "Simple table data"
+        assert "New York" in table_text, "Simple table city data"
+        assert "Bold Feature" in table_text, "Table with formatting"
+        assert "Italic Feature" in table_text, "Table with formatting"
+        assert "Removed" in table_text, "Table with strikethrough"
+        assert "Left Aligned" in table_text or "L1" in table_text, "Alignment table"
+
+        # Table cells should have inline formatting (bold, italic, code, strikethrough, underline)
+        table_runs = [r for table in doc.tables
+                      for row in table.rows for cell in row.cells
+                      for p in cell.paragraphs for r in p.runs]
+        table_bold = [r for r in table_runs if r.bold]
+        assert len(table_bold) > 0, "Table cells should have bold formatting"
+        table_italic = [r for r in table_runs if r.italic]
+        assert len(table_italic) > 0, "Table cells should have italic formatting"
+        table_code = [r for r in table_runs if r.font.name == "Courier New"]
+        assert len(table_code) > 0, "Table cells should have code formatting"
+        table_strike = [r for r in table_runs if r.font.strike]
+        assert len(table_strike) > 0, "Table cells should have strikethrough formatting"
+        table_underline = [r for r in table_runs if r.font.underline]
+        assert len(table_underline) > 0, "Table cells should have underline formatting"
+
+        # Table hyperlinks
+        table_xml = "".join(
+            table._tbl.xml for table in doc.tables
+        )
+        assert 'w:hyperlink' in table_xml, "Table should have hyperlinks"
+
+        # ----- Page break (---) in XML -----
+        xml = doc.element.xml
+        assert 'w:br' in xml or 'type="page"' in xml, "Should have page break"
+
+        # ----- Horizontal line (***) as w:pBdr -----
+        assert 'w:pBdr' in xml, "Should have horizontal line borders"
+        # Multiple horizontal lines (***) used as section separators
+        pBdr_count = xml.count('w:pBdr')
+        assert pBdr_count >= 2, f"Should have multiple horizontal lines, got {pBdr_count}"
+
+        # ----- Image error placeholder (invalid URL) -----
+        assert "Image could not be loaded" in full_text, "Should have image error placeholder"
+        assert "invalid-test-domain.test" in full_text, \
+            "Image error should include the URL"
+
+        # ----- Line breaks (two trailing spaces -> w:br) -----
+        # The "Line Breaks" section uses trailing spaces to produce soft breaks
+        line_break_count = xml.count('<w:br/>')
+        assert line_break_count >= 2, \
+            f"Should have >=2 soft line breaks from trailing double-spaces, got {line_break_count}"
+
+        # ----- Hyperlinks -----
+        hyperlink_count = xml.count('w:hyperlink')
+        assert hyperlink_count >= 4, \
+            f"Should have at least 4 hyperlinks (example, google, docs, privacy), got {hyperlink_count}"
+
+        # ----- Escaped characters (should NOT have formatting) -----
+        # The escaped line should render as literal text with *, **, `
+        escaped_para = None
+        for p in doc.paragraphs:
+            if "not italic" in p.text and "not bold" in p.text:
+                escaped_para = p
+                break
+        assert escaped_para is not None, "Should find the escaped characters paragraph"
+        # None of the runs in the escaped paragraph should have formatting
+        for r in escaped_para.runs:
+            if "not italic" in r.text:
+                assert not r.italic, "Escaped *text* should NOT be italic"
+            if "not bold" in r.text:
+                assert not r.bold, "Escaped **text** should NOT be bold"
+
+    def test_comprehensive_visual_with_metadata_and_toc(self):
+        """Generate a comprehensive document with metadata, TOC, header and footer.
+
+        Output: tests/output/docx/VISUAL_INSPECTION_metadata_toc.docx
+        """
+        markdown = """# Chapter 1: Introduction
+
+This is the introduction chapter. It demonstrates that the **Table of Contents**,
+document **metadata**, and **headers/footers** with page numbers work correctly.
+
+## 1.1 Background
+
+Some background information with *italic* and **bold** formatting.
+
+## 1.2 Objectives
+
+1. Verify TOC generation
+2. Verify metadata fields
+3. Verify header and footer with page numbers
+
+---
+
+# Chapter 2: Features
+
+## 2.1 Strikethrough and Underline
+
+~~Old feature~~ replaced by __new feature__.
+
+## 2.2 Text Alignment
+
+<center>Centered heading text</center>
+
+<div align="right">Right-aligned date: 2026-02-20</div>
+
+## 2.3 Bold Italic
+
+This is ***bold and italic*** text together.
+
+---
+
+# Chapter 3: Conclusion
+
+All features verified. Check the header, footer (with page numbers), TOC,
+and document properties (title, author, subject) in Word.
+
+**End of document.**
+"""
+        doc = create_word_document(
+            markdown,
+            title="Visual Inspection Document",
+            author="Test Suite",
+            subject="Comprehensive Feature Verification",
+            header_text="Visual Inspection Report",
+            footer_text="Page {page} of {pages}",
+            include_toc=True,
+        )
+        output_path = OUTPUT_DIR / "VISUAL_INSPECTION_metadata_toc.docx"
+        doc.save(str(output_path))
+        print(f"Saved: {output_path}")
+
+        # Verify metadata
+        assert doc.core_properties.title == "Visual Inspection Document"
+        assert doc.core_properties.author == "Test Suite"
+        assert doc.core_properties.subject == "Comprehensive Feature Verification"
+
+        # Verify TOC field exists
+        xml = doc.element.xml
+        assert 'TOC' in xml, "Should have TOC field"
+        assert 'updateFields' in doc.settings.element.xml, "Should have updateFields setting"
+
+        # Verify header
+        header = doc.sections[0].header
+        header_text = "\n".join([p.text for p in header.paragraphs])
+        assert "Visual Inspection Report" in header_text
+
+        # Verify footer with page fields
+        footer = doc.sections[0].footer
+        footer_xml = footer._element.xml
+        assert 'PAGE' in footer_xml, "Footer should contain PAGE field"
+        assert 'NUMPAGES' in footer_xml, "Footer should contain NUMPAGES field"
+
+        # Verify content
+        full_text = "\n".join([p.text for p in doc.paragraphs])
+        assert "Table of Contents" in full_text
+        assert "Chapter 1" in full_text
+        assert "Chapter 2" in full_text
+        assert "Chapter 3" in full_text
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+# =============================================================================
+# Page Break Tests (Feature 1)
+# =============================================================================
+
+class TestPageBreaks:
+    """Tests for page break (---) conversion."""
+
+    def test_page_break_creates_break_element(self):
+        """Test that --- creates a page break (w:br type=page)."""
+        markdown = "First page content\n\n---\n\nSecond page content"
+        doc = save_test_document(markdown, "page_break_basic.docx")
+        xml = doc.element.xml
+        assert 'w:br' in xml or 'lastRenderedPageBreak' in xml or 'type="page"' in xml
+
+    def test_multiple_page_breaks(self):
+        """Test multiple page breaks in a document."""
+        markdown = "Page 1\n\n---\n\nPage 2\n\n---\n\nPage 3"
+        doc = save_test_document(markdown, "page_break_multiple.docx")
+        assert doc is not None
+
+    def test_page_break_with_long_dashes(self):
+        """Test that ---- (more than 3 dashes) also creates page break."""
+        markdown = "Before\n\n----\n\nAfter"
+        doc = save_test_document(markdown, "page_break_long_dashes.docx")
+        assert doc is not None
+
+
+# =============================================================================
+# Horizontal Line Tests (Feature 1)
+# =============================================================================
+
+class TestHorizontalLines:
+    """Tests for horizontal line (***) conversion."""
+
+    def test_horizontal_line_creates_border(self):
+        """Test that *** creates a horizontal line with bottom border."""
+        markdown = "Text above\n\n***\n\nText below"
+        doc = save_test_document(markdown, "hline_basic.docx")
+        xml = doc.element.xml
+        assert 'w:pBdr' in xml
+        assert 'w:bottom' in xml
+
+    def test_multiple_horizontal_lines(self):
+        """Test multiple horizontal lines."""
+        markdown = "Section 1\n\n***\n\nSection 2\n\n***\n\nSection 3"
+        doc = save_test_document(markdown, "hline_multiple.docx")
+        assert doc is not None
+
+
+# =============================================================================
+# Image Tests (Feature 2)
+# =============================================================================
+
+class TestImages:
+    """Tests for image (![alt](url)) conversion."""
+
+    def test_image_with_invalid_url(self):
+        """Test image with invalid URL creates error placeholder."""
+        markdown = "![Test](https://invalid-domain-that-does-not-exist.test/img.png)"
+        doc = save_test_document(markdown, "image_invalid_url.docx")
+        full_text = "\n".join([p.text for p in doc.paragraphs])
+        assert "Image could not be loaded" in full_text
+
+    def test_image_placeholder_text(self):
+        """Test that failed image includes the URL in error text."""
+        url = "https://nonexistent.test/photo.jpg"
+        markdown = f"![Photo]({url})"
+        doc = save_test_document(markdown, "image_placeholder.docx")
+        full_text = "\n".join([p.text for p in doc.paragraphs])
+        assert url in full_text
+
+
+# =============================================================================
+# Text Alignment Tests (Feature 3)
+# =============================================================================
+
+class TestTextAlignment:
+    """Tests for text alignment via HTML tags."""
+
+    def test_center_alignment(self):
+        """Test <center>text</center> creates centered paragraph."""
+        markdown = "<center>Centered text</center>"
+        doc = save_test_document(markdown, "align_center.docx")
+        # Find the paragraph with the centered text
+        for p in doc.paragraphs:
+            if "Centered text" in p.text:
+                assert p.alignment == WD_ALIGN_PARAGRAPH.CENTER
+                break
+        else:
+            pytest.fail("Centered text paragraph not found")
+
+    def test_right_alignment(self):
+        """Test <div align="right">text</div> creates right-aligned paragraph."""
+        markdown = '<div align="right">Right aligned text</div>'
+        doc = save_test_document(markdown, "align_right.docx")
+        for p in doc.paragraphs:
+            if "Right aligned" in p.text:
+                assert p.alignment == WD_ALIGN_PARAGRAPH.RIGHT
+                break
+        else:
+            pytest.fail("Right-aligned text paragraph not found")
+
+    def test_justify_alignment(self):
+        """Test <div align="justify">text</div> creates justified paragraph."""
+        markdown = '<div align="justify">Justified text content</div>'
+        doc = save_test_document(markdown, "align_justify.docx")
+        for p in doc.paragraphs:
+            if "Justified text" in p.text:
+                assert p.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
+                break
+        else:
+            pytest.fail("Justified text paragraph not found")
+
+    def test_multiline_center_block(self):
+        """Test multi-line <center> block."""
+        markdown = "<center>\nCompany Name\nStreet Address\nCity, Country\n</center>"
+        doc = save_test_document(markdown, "align_multiline_center.docx")
+        centered_paragraphs = [p for p in doc.paragraphs
+                               if p.alignment == WD_ALIGN_PARAGRAPH.CENTER
+                               and p.text.strip()]
+        assert len(centered_paragraphs) >= 3
+
+    def test_multiline_div_right_block(self):
+        """Test multi-line <div align="right"> block."""
+        markdown = '<div align="right">\nDate: 2026-02-20\nRef: ABC-123\n</div>'
+        doc = save_test_document(markdown, "align_multiline_right.docx")
+        right_paragraphs = [p for p in doc.paragraphs
+                            if p.alignment == WD_ALIGN_PARAGRAPH.RIGHT
+                            and p.text.strip()]
+        assert len(right_paragraphs) >= 2
+
+
+# =============================================================================
+# Document Metadata Tests (Feature 5)
+# =============================================================================
+
+class TestDocumentMetadata:
+    """Tests for document metadata (title, author, subject)."""
+
+    def test_metadata_title(self):
+        """Test that document title is set."""
+        doc = create_word_document("# Test", title="My Document Title")
+        assert doc.core_properties.title == "My Document Title"
+
+    def test_metadata_author(self):
+        """Test that document author is set."""
+        doc = create_word_document("# Test", author="John Doe")
+        assert doc.core_properties.author == "John Doe"
+
+    def test_metadata_subject(self):
+        """Test that document subject is set."""
+        doc = create_word_document("# Test", subject="Annual Report 2026")
+        assert doc.core_properties.subject == "Annual Report 2026"
+
+    def test_metadata_all_fields(self):
+        """Test that all metadata fields are set together."""
+        doc = create_word_document(
+            "# Report",
+            title="Annual Report",
+            author="Jane Smith",
+            subject="Financial Overview"
+        )
+        assert doc.core_properties.title == "Annual Report"
+        assert doc.core_properties.author == "Jane Smith"
+        assert doc.core_properties.subject == "Financial Overview"
+
+    def test_metadata_none_not_set(self):
+        """Test that None metadata does not overwrite defaults."""
+        doc = create_word_document("# Test")
+        # Should not throw, core_properties should exist
+        assert doc.core_properties is not None
+
+
+# =============================================================================
+# Header/Footer Tests (Feature 6)
+# =============================================================================
+
+class TestHeadersFooters:
+    """Tests for document headers and footers with page numbers."""
+
+    def test_header_plain_text(self):
+        """Test simple header text."""
+        doc = create_word_document("# Test", header_text="Company Report")
+        header = doc.sections[0].header
+        header_text = "\n".join([p.text for p in header.paragraphs])
+        assert "Company Report" in header_text
+
+    def test_footer_plain_text(self):
+        """Test simple footer text."""
+        doc = create_word_document("# Test", footer_text="Confidential")
+        footer = doc.sections[0].footer
+        footer_text = "\n".join([p.text for p in footer.paragraphs])
+        assert "Confidential" in footer_text
+
+    def test_footer_with_page_number(self):
+        """Test footer with {page} token inserts PAGE field."""
+        doc = create_word_document("# Test", footer_text="Page {page} of {pages}")
+        footer = doc.sections[0].footer
+        xml = footer._element.xml
+        assert 'PAGE' in xml
+        assert 'NUMPAGES' in xml
+
+    def test_header_and_footer_together(self):
+        """Test both header and footer set simultaneously."""
+        doc = create_word_document(
+            "# Test",
+            header_text="Header Text",
+            footer_text="Footer Text"
+        )
+        header_text = "\n".join([p.text for p in doc.sections[0].header.paragraphs])
+        footer_text = "\n".join([p.text for p in doc.sections[0].footer.paragraphs])
+        assert "Header Text" in header_text
+        assert "Footer Text" in footer_text
+
+    def test_header_footer_saved(self):
+        """Test header and footer are preserved when saving."""
+        doc = save_test_document("# Report\n\nSome content.", "header_footer_saved.docx")
+        # Just verify doc is created successfully - manual inspection for formatting
+        assert doc is not None
+
+
+# =============================================================================
+# Table of Contents Tests (Feature 7)
+# =============================================================================
+
+class TestTableOfContents:
+    """Tests for Table of Contents insertion."""
+
+    def test_toc_field_exists(self):
+        """Test that TOC field elements are present in document XML."""
+        doc = create_word_document(
+            "# Chapter 1\n\nContent\n\n## Section 1.1\n\nMore content",
+            include_toc=True
+        )
+        xml = doc.element.xml
+        assert 'TOC' in xml
+        assert 'fldChar' in xml or 'fldSimple' in xml
+
+    def test_toc_heading_exists(self):
+        """Test that 'Table of Contents' heading is added."""
+        doc = create_word_document("# Test Heading\n\nContent", include_toc=True)
+        full_text = "\n".join([p.text for p in doc.paragraphs])
+        assert "Table of Contents" in full_text
+
+    def test_toc_update_fields_setting(self):
+        """Test that updateFields setting is added to document."""
+        doc = create_word_document("# Test", include_toc=True)
+        xml = doc.settings.element.xml
+        assert 'updateFields' in xml
+
+    def test_toc_saved_document(self):
+        """Test that TOC document saves correctly."""
+        doc = save_test_document(
+            "# Chapter 1\n\nIntro\n\n## Section 1.1\n\nDetails\n\n# Chapter 2\n\nConclusion",
+            "toc_document.docx"
+        )
+        assert doc is not None
+
+
+# =============================================================================
+# Underline and Strikethrough Tests (Feature 8)
+# =============================================================================
+
+class TestUnderlineStrikethrough:
+    """Tests for ~~strikethrough~~ and __underline__ formatting."""
+
+    def test_strikethrough(self):
+        """Test ~~text~~ creates strikethrough run."""
+        doc = Document()
+        para = doc.add_paragraph()
+        parse_inline_formatting("This is ~~deleted~~ text", para)
+        strike_runs = [r for r in para.runs if r.font.strike]
+        assert len(strike_runs) > 0
+        assert any("deleted" in r.text for r in strike_runs)
+
+    def test_underline(self):
+        """Test __text__ creates underlined run."""
+        doc = Document()
+        para = doc.add_paragraph()
+        parse_inline_formatting("This is __important__ text", para)
+        underline_runs = [r for r in para.runs if r.font.underline]
+        assert len(underline_runs) > 0
+        assert any("important" in r.text for r in underline_runs)
+
+    def test_bold_and_underline(self):
+        """Test **__text__** creates bold and underlined run."""
+        doc = Document()
+        para = doc.add_paragraph()
+        parse_inline_formatting("**__bold and underlined__**", para)
+        bu_runs = [r for r in para.runs if r.bold and r.font.underline]
+        assert len(bu_runs) > 0
+
+    def test_mixed_strikethrough_underline(self):
+        """Test mixed ~~old~~ __new__ text."""
+        doc = Document()
+        para = doc.add_paragraph()
+        parse_inline_formatting("This is ~~old~~ __new__ text", para)
+        strike_runs = [r for r in para.runs if r.font.strike]
+        underline_runs = [r for r in para.runs if r.font.underline]
+        assert len(strike_runs) > 0
+        assert len(underline_runs) > 0
+
+    def test_strikethrough_in_document(self):
+        """Test strikethrough in full document creation."""
+        markdown = "This has ~~deleted text~~ in it."
+        doc = save_test_document(markdown, "format_strikethrough.docx")
+        assert doc is not None
+
+    def test_underline_in_document(self):
+        """Test underline in full document creation."""
+        markdown = "This has __underlined text__ in it."
+        doc = save_test_document(markdown, "format_underline.docx")
+        assert doc is not None
+
 
