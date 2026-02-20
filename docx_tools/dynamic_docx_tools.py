@@ -48,6 +48,8 @@ from .helpers import (
     contains_block_markdown,
     process_markdown_block,
 )
+from fastmcp.exceptions import ToolError
+
 
 __all__ = ["register_docx_template_tools_from_yaml"]
 
@@ -85,32 +87,35 @@ def _insert_markdown_content_after_paragraph(
         paragraph: The paragraph after which to insert content
         content: The markdown content to insert
     """
-    lines = content.split('\n')
-    i = 0
+    try:
+        lines = content.split('\n')
+        i = 0
 
-    # Find the paragraph's position in the document body
-    body = doc._body._body
-    p_element = paragraph._p
-    para_idx = list(body).index(p_element)
+        # Find the paragraph's position in the document body
+        body = doc._body._body
+        p_element = paragraph._p
+        para_idx = list(body).index(p_element)
 
-    # Track how many elements we've inserted
-    inserted_count = 0
+        # Track how many elements we've inserted
+        inserted_count = 0
 
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
 
-        if not stripped:
-            i += 1
-            continue
+            if not stripped:
+                i += 1
+                continue
 
-        # Use shared helper to process the markdown block
-        i, new_elements = process_markdown_block(doc, lines, i, return_element=True)
+            # Use shared helper to process the markdown block
+            i, new_elements = process_markdown_block(doc, lines, i, return_element=True)
 
-        # Insert elements at the correct position
-        for elem in new_elements:
-            body.insert(para_idx + 1 + inserted_count, elem)
-            inserted_count += 1
+            # Insert elements at the correct position
+            for elem in new_elements:
+                body.insert(para_idx + 1 + inserted_count, elem)
+                inserted_count += 1
+    except Exception as e:
+        logger.error("Failed to insert markdown content after paragraph: %s", e, exc_info=True)
 
 
 def find_docx_template_by_name(filename: str) -> Optional[str]:
@@ -149,99 +154,102 @@ def _replace_placeholder_in_paragraph(
     Returns:
         True if replacement was made, False otherwise
     """
+    try:
+        # First, try to find the placeholder in the full paragraph text
+        full_text = paragraph.text
+        if placeholder not in full_text:
+            return False
 
-    # First, try to find the placeholder in the full paragraph text
-    full_text = paragraph.text
-    if placeholder not in full_text:
+        # Collect all runs and their text
+        runs = list(paragraph.runs)
+        if not runs:
+            return False
+
+        # Build a map of character positions to runs
+        combined_text = ""
+        run_info = []  # List of (start_pos, end_pos, run)
+
+        for run in runs:
+            start = len(combined_text)
+            combined_text += run.text
+            end = len(combined_text)
+            run_info.append((start, end, run))
+
+        # Find the placeholder in the combined text
+        placeholder_start = combined_text.find(placeholder)
+        if placeholder_start == -1:
+            return False
+
+        placeholder_end = placeholder_start + len(placeholder)
+
+        # Store formatting from the run where placeholder starts
+        formatting_run = None
+        for start, end, run in run_info:
+            if start <= placeholder_start < end:
+                formatting_run = run
+                break
+
+        font_name = formatting_run.font.name if formatting_run else None
+        font_size = formatting_run.font.size if formatting_run else None
+
+        # Strategy: Rebuild the paragraph content
+        # 1. Get text before placeholder
+        # 2. Get replacement content (parsed markdown)
+        # 3. Get text after placeholder
+
+        text_before = combined_text[:placeholder_start]
+        text_after = combined_text[placeholder_end:]
+
+        # Check if the value contains block-level content (lists, headings)
+        has_block_content = contains_block_markdown(value)
+
+        # Clear all existing runs
+        p_element = paragraph._p
+        for run in runs:
+            p_element.remove(run._r)
+
+        # Add text before placeholder (plain text, preserve any formatting would be complex)
+        if text_before:
+            run = paragraph.add_run(text_before)
+
+        if has_block_content and doc is not None:
+            # For block content, we need to insert as separate paragraphs
+            # First, handle any text_after by adding it later
+            if text_after:
+                # We'll need to add text_after to the last inserted paragraph
+                pass
+
+            # Insert block content after this paragraph
+            _insert_markdown_content_after_paragraph(doc, paragraph, value)
+
+            # If there's text after, add it as a run to this paragraph
+            if text_after:
+                paragraph.add_run(text_after)
+        else:
+            # Simple inline replacement
+            # Parse and add the replacement value with markdown formatting
+            parse_inline_formatting(value, paragraph)
+
+            # Apply font formatting to newly added runs (from replacement)
+            if font_name or font_size:
+                # Get runs added after text_before
+                new_runs = list(paragraph.runs)
+                start_idx = 1 if text_before else 0
+                for run in new_runs[start_idx:]:
+                    if font_name and not run.font.name:
+                        run.font.name = font_name
+                    if font_size and not run.font.size:
+                        run.font.size = font_size
+
+            # Add text after placeholder
+            if text_after:
+                paragraph.add_run(text_after)
+
+        return True
+
+    except Exception as e:
+        logger.error("Failed to replace placeholder '%s' in paragraph: %s", placeholder, e, exc_info=True)
         return False
-
-    # Collect all runs and their text
-    runs = list(paragraph.runs)
-    if not runs:
-        return False
-
-    # Build a map of character positions to runs
-    combined_text = ""
-    run_info = []  # List of (start_pos, end_pos, run)
-
-    for run in runs:
-        start = len(combined_text)
-        combined_text += run.text
-        end = len(combined_text)
-        run_info.append((start, end, run))
-
-    # Find the placeholder in the combined text
-    placeholder_start = combined_text.find(placeholder)
-    if placeholder_start == -1:
-        return False
-
-    placeholder_end = placeholder_start + len(placeholder)
-
-    # Store formatting from the run where placeholder starts
-    formatting_run = None
-    for start, end, run in run_info:
-        if start <= placeholder_start < end:
-            formatting_run = run
-            break
-
-    font_name = formatting_run.font.name if formatting_run else None
-    font_size = formatting_run.font.size if formatting_run else None
-
-    # Strategy: Rebuild the paragraph content
-    # 1. Get text before placeholder
-    # 2. Get replacement content (parsed markdown)
-    # 3. Get text after placeholder
-
-    text_before = combined_text[:placeholder_start]
-    text_after = combined_text[placeholder_end:]
-
-    # Check if the value contains block-level content (lists, headings)
-    has_block_content = contains_block_markdown(value)
-
-    # Clear all existing runs
-    p_element = paragraph._p
-    for run in runs:
-        p_element.remove(run._r)
-
-    # Add text before placeholder (plain text, preserve any formatting would be complex)
-    if text_before:
-        run = paragraph.add_run(text_before)
-
-    if has_block_content and doc is not None:
-        # For block content, we need to insert as separate paragraphs
-        # First, handle any text_after by adding it later
-        if text_after:
-            # We'll need to add text_after to the last inserted paragraph
-            pass
-
-        # Insert block content after this paragraph
-        _insert_markdown_content_after_paragraph(doc, paragraph, value)
-
-        # If there's text after, add it as a run to this paragraph
-        if text_after:
-            paragraph.add_run(text_after)
-    else:
-        # Simple inline replacement
-        # Parse and add the replacement value with markdown formatting
-        parse_inline_formatting(value, paragraph)
-
-        # Apply font formatting to newly added runs (from replacement)
-        if font_name or font_size:
-            # Get runs added after text_before
-            new_runs = list(paragraph.runs)
-            start_idx = 1 if text_before else 0
-            for run in new_runs[start_idx:]:
-                if font_name and not run.font.name:
-                    run.font.name = font_name
-                if font_size and not run.font.size:
-                    run.font.size = font_size
-
-        # Add text after placeholder
-        if text_after:
-            paragraph.add_run(text_after)
-
-
-    return True
 
 
 def _replace_placeholders_in_paragraph(
@@ -480,18 +488,20 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any]) -> None:
 
                 # Save to buffer and upload
                 buffer = io.BytesIO()
-                doc.save(buffer)
-                buffer.seek(0)
+                try:
+                    doc.save(buffer)
+                    buffer.seek(0)
 
-                result = upload_file(buffer, "docx")
-                buffer.close()
+                    result = upload_file(buffer, "docx")
+                finally:
+                    buffer.close()
 
                 logger.info(f"[dynamic-docx] Document generated from template {_name}")
                 return result
 
             except Exception as e:
-                logger.error(f"[dynamic-docx] Error generating document from {_name}: {e}")
-                return f"Error generating document from template {_name}: {e}"
+                logger.error(f"[dynamic-docx] Error generating document from {_name}: {e}", exc_info=True)
+                raise ToolError(f"Error generating document from template {_name}: {e}")
 
         tool_impl.__annotations__['data'] = _model  # type: ignore[index]
         tool_impl.__annotations__['return'] = str  # type: ignore[index]

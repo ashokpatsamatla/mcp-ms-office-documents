@@ -372,10 +372,17 @@ class PowerpointPresentation(SlideHelperMixin, TextHelperMixin, TableHelperMixin
 
         Returns:
             BytesIO containing the presentation.
+
+        Raises:
+            RuntimeError: If saving fails.
         """
         logger.info("Saving PowerPoint to memory buffer")
-        buffer = io.BytesIO()
-        self.presentation.save(buffer)
-        buffer.seek(0)
-        return buffer
+        try:
+            buffer = io.BytesIO()
+            self.presentation.save(buffer)
+            buffer.seek(0)
+            return buffer
+        except Exception as e:
+            logger.error("Failed to save PowerPoint presentation: %s", e, exc_info=True)
+            raise RuntimeError(f"Failed to save presentation: {e}") from e
 

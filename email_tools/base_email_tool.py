@@ -23,11 +23,16 @@ def _load_template() -> str:
     """
     path = find_email_template()
     if not path:
+        logger.error("Email template not found: tried custom_email_template.html and default_email_template.html")
         raise FileNotFoundError(
             "Email template not found: tried custom_email_template.html and default_email_template.html"
         )
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        logger.error("Failed to read email template at %s: %s", path, e, exc_info=True)
+        raise
 
 
 def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language="cs-CZ"):
@@ -48,22 +53,22 @@ def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="norm
     if not re:
         raise ValueError("Email subject is required")
 
-    template_html = _load_template()
-
-    # Prepare context
-    safe_language = (language or "").replace('"', '').replace("'", '')
-    escaped_subject = html.escape(re or "")
-
-    renderer = pystache.Renderer(escape=lambda u: u)  # We'll manually escape where needed
-    context = {
-        "language": safe_language,   # safe for attribute insertion
-        "subject": escaped_subject,  # already escaped
-        "content": content,          # inserted unescaped via triple braces {{{content}}}
-    }
-    complete_html = renderer.render(template_html, context)
-
     buffer = None
     try:
+        template_html = _load_template()
+
+        # Prepare context
+        safe_language = (language or "").replace('"', '').replace("'", '')
+        escaped_subject = html.escape(re or "")
+
+        renderer = pystache.Renderer(escape=lambda u: u)  # We'll manually escape where needed
+        context = {
+            "language": safe_language,   # safe for attribute insertion
+            "subject": escaped_subject,  # already escaped
+            "content": content,          # inserted unescaped via triple braces {{{content}}}
+        }
+        complete_html = renderer.render(template_html, context)
+
         msg = MIMEText(complete_html, 'html', 'utf-8')
         # Ensure proper encoding (base64 avoids quoted-printable soft breaks generating '=')
         if 'Content-Transfer-Encoding' in msg:
@@ -101,7 +106,8 @@ def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="norm
 
         return upload_file(buffer, "eml")
     except Exception as e:
-        raise Exception(f"Failed to create email draft: {e}")
+        logger.error("Failed to create email draft: %s", e, exc_info=True)
+        raise RuntimeError(f"Failed to create email draft: {e}") from e
     finally:
         if buffer:
             buffer.close()

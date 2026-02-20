@@ -23,38 +23,45 @@ def load_templates():
 
 
 def add_hyperlink(paragraph, text, url, color="0000FF", underline=True):
-    """Adds a hyperlink to a paragraph"""
-    part = paragraph.part
-    r_id = part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+    """Adds a hyperlink to a paragraph.
 
-    hyperlink = OxmlElement('w:hyperlink')
-    hyperlink.set(qn('r:id'), r_id)
+    Falls back to plain text if hyperlink creation fails.
+    """
+    try:
+        part = paragraph.part
+        r_id = part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
 
-    new_run = OxmlElement('w:r')
-    rPr = OxmlElement('w:rPr')
+        hyperlink = OxmlElement('w:hyperlink')
+        hyperlink.set(qn('r:id'), r_id)
 
-    if underline:
-        u = OxmlElement('w:u')
-        u.set(qn('w:val'), 'single')
-        rPr.append(u)
+        new_run = OxmlElement('w:r')
+        rPr = OxmlElement('w:rPr')
 
-    if color:
-        c = OxmlElement('w:color')
-        c.set(qn('w:val'), color)
-        rPr.append(c)
+        if underline:
+            u = OxmlElement('w:u')
+            u.set(qn('w:val'), 'single')
+            rPr.append(u)
 
-    new_run.append(rPr)
+        if color:
+            c = OxmlElement('w:color')
+            c.set(qn('w:val'), color)
+            rPr.append(c)
 
-    # Create the text element properly
-    text_elem = OxmlElement('w:t')
-    text_elem.text = text
-    # Preserve spaces at start/end
-    text_elem.set(qn('xml:space'), 'preserve')
-    new_run.append(text_elem)
+        new_run.append(rPr)
 
-    hyperlink.append(new_run)
+        # Create the text element properly
+        text_elem = OxmlElement('w:t')
+        text_elem.text = text
+        # Preserve spaces at start/end
+        text_elem.set(qn('xml:space'), 'preserve')
+        new_run.append(text_elem)
 
-    paragraph._p.append(hyperlink)
+        hyperlink.append(new_run)
+
+        paragraph._p.append(hyperlink)
+    except Exception as e:
+        logger.warning("Failed to create hyperlink for '%s' (%s), falling back to plain text: %s", text, url, e)
+        paragraph.add_run(text)
 
 
 def parse_inline_formatting(text, paragraph, bold=False, italic=False):
@@ -211,18 +218,29 @@ def add_table_to_doc(table_data, doc):
     rows = len(table_data)
     cols = max(len(row) for row in table_data) if table_data else 0
 
-    word_table = doc.add_table(rows=rows, cols=cols)
-    word_table.style = 'Table Grid'
+    try:
+        word_table = doc.add_table(rows=rows, cols=cols)
+        word_table.style = 'Table Grid'
+    except Exception as e:
+        logger.warning("Failed to create table with 'Table Grid' style, using default: %s", e)
+        try:
+            word_table = doc.add_table(rows=rows, cols=cols)
+        except Exception as e2:
+            logger.error("Failed to create table: %s", e2, exc_info=True)
+            return
 
     for i, row_data in enumerate(table_data):
         for j, cell_text in enumerate(row_data):
             if j < cols:
-                cell = word_table.cell(i, j)
-                if cell.paragraphs:
-                    cell.paragraphs[0].clear()
+                try:
+                    cell = word_table.cell(i, j)
+                    if cell.paragraphs:
+                        cell.paragraphs[0].clear()
 
-                cell_paragraph = cell.paragraphs[0]
-                parse_inline_formatting(cell_text, cell_paragraph)
+                    cell_paragraph = cell.paragraphs[0]
+                    parse_inline_formatting(cell_text, cell_paragraph)
+                except Exception as e:
+                    logger.warning("Failed to populate table cell [%d, %d]: %s", i, j, e)
 
 
 def process_list_items(lines, start_idx, doc, is_ordered=False, level=0):
@@ -398,34 +416,39 @@ def process_markdown_block(doc, lines, start_idx, return_element=True):
     stripped = line.strip()
     elements = []
 
-    # Check for heading
-    heading_match = HEADING_PATTERN.match(stripped)
-    if heading_match:
-        level = len(heading_match.group(1))
-        text = heading_match.group(2)
-        heading = doc.add_heading('', level=min(level, 6))
-        parse_inline_formatting(text, heading)
+    try:
+        # Check for heading
+        heading_match = HEADING_PATTERN.match(stripped)
+        if heading_match:
+            level = len(heading_match.group(1))
+            text = heading_match.group(2)
+            heading = doc.add_heading('', level=min(level, 6))
+            parse_inline_formatting(text, heading)
+            if return_element:
+                elements.append(heading._p)
+                doc._body._body.remove(heading._p)
+            return start_idx + 1, elements
+
+        # Check for ordered list
+        if ORDERED_LIST_PATTERN.match(stripped):
+            return process_list_items_returning_elements(
+                lines, start_idx, doc, is_ordered=True, level=0, return_elements=return_element
+            )
+
+        # Check for unordered list
+        if UNORDERED_LIST_PATTERN.match(stripped):
+            return process_list_items_returning_elements(
+                lines, start_idx, doc, is_ordered=False, level=0, return_elements=return_element
+            )
+
+        # Regular paragraph
+        para = doc.add_paragraph()
+        parse_inline_formatting(stripped, para)
         if return_element:
-            elements.append(heading._p)
-            doc._body._body.remove(heading._p)
+            elements.append(para._p)
+            doc._body._body.remove(para._p)
         return start_idx + 1, elements
 
-    # Check for ordered list
-    if ORDERED_LIST_PATTERN.match(stripped):
-        return process_list_items_returning_elements(
-            lines, start_idx, doc, is_ordered=True, level=0, return_elements=return_element
-        )
-
-    # Check for unordered list
-    if UNORDERED_LIST_PATTERN.match(stripped):
-        return process_list_items_returning_elements(
-            lines, start_idx, doc, is_ordered=False, level=0, return_elements=return_element
-        )
-
-    # Regular paragraph
-    para = doc.add_paragraph()
-    parse_inline_formatting(stripped, para)
-    if return_element:
-        elements.append(para._p)
-        doc._body._body.remove(para._p)
-    return start_idx + 1, elements
+    except Exception as e:
+        logger.error("Failed to process markdown block at line %d: %s", start_idx, e, exc_info=True)
+        return start_idx + 1, elements

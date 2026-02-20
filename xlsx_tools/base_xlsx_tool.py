@@ -97,7 +97,7 @@ def markdown_to_excel(markdown_content: str) -> str:
 
     except Exception as e:
         logger.error("Error generating Excel workbook: %s", str(e), exc_info=True)
-        return f"Error generating Excel workbook: {e}"
+        raise RuntimeError(f"Error generating Excel workbook: {e}") from e
 
     # Save workbook to BytesIO and upload via existing helper
     file_object = io.BytesIO()
@@ -110,6 +110,6 @@ def markdown_to_excel(markdown_content: str) -> str:
         return result
     except Exception as e:
         logger.error("Error saving/uploading Excel workbook: %s", str(e), exc_info=True)
-        return f"Error saving/uploading Excel workbook: {e}"
+        raise RuntimeError(f"Error saving/uploading Excel workbook: {e}") from e
     finally:
         file_object.close()

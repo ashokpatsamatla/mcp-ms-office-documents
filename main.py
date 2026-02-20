@@ -1,4 +1,5 @@
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 from typing import Annotated, List, Dict, Optional, Literal
 from xlsx_tools import markdown_to_excel
@@ -109,8 +110,8 @@ async def create_excel_document(
         logger.info("Excel document uploaded successfully")
         return result
     except Exception as e:
-        logger.error(f"Error creating Excel document: {e}")
-        return f"Error creating Excel document: {str(e)}"
+        logger.error(f"Error creating Excel document: {e}", exc_info=True)
+        raise ToolError(f"Error creating Excel document: {e}")
 
 @mcp.tool(
     name="create_word_from_markdown",
@@ -133,8 +134,8 @@ async def create_word_document(
         logger.info("Word document uploaded successfully")
         return result
     except Exception as e:
-        logger.error(f"Error creating Word document: {e}")
-        return f"Error creating Word document: {str(e)}"
+        logger.error(f"Error creating Word document: {e}", exc_info=True)
+        raise ToolError(f"Error creating Word document: {e}")
 
 @mcp.tool(
     name="create_powerpoint_presentation",
@@ -171,8 +172,8 @@ All slides support optional 'speaker_notes': str field."""
         logger.info(f"PowerPoint presentation created: {result}")
         return result
     except Exception as e:
-        logger.error(f"Error creating PowerPoint presentation: {e}")
-        return f"Error creating PowerPoint presentation: {str(e)}"
+        logger.error(f"Error creating PowerPoint presentation: {e}", exc_info=True)
+        raise ToolError(f"Error creating PowerPoint presentation: {e}")
 
 @mcp.tool(
     name="create_email_draft",
@@ -208,8 +209,8 @@ async def create_email_draft(
         logger.info(f"Email draft created: {result}")
         return result
     except Exception as e:
-        logger.error(f"Error creating email draft: {e}")
-        return f"Error creating email draft: {str(e)}"
+        logger.error(f"Error creating email draft: {e}", exc_info=True)
+        raise ToolError(f"Error creating email draft: {e}")
 
 @mcp.tool(
     name="create_xml_file",
@@ -232,8 +233,8 @@ async def create_xml_document(
         logger.info(f"XML file created successfully.")
         return result
     except Exception as e:
-        logger.error(f"Error creating XML file: {e}")
-        return f"Error creating XML file: {str(e)}"
+        logger.error(f"Error creating XML file: {e}", exc_info=True)
+        raise ToolError(f"Error creating XML file: {e}")
 
 if __name__ == "__main__":
     mcp.run(
