@@ -111,9 +111,6 @@ def adjust_formula_references(formula: str, current_excel_row: int, table_positi
         adjusted = re.sub(table_pattern, replace_table_reference, formula)
 
         # Table range references e.g. T1.B[0]:T1.E[0]
-        table_range_pattern = r'T(\d+)\.([A-Z]+)\([+-]?\d+\):T(\d+)\.([A-Z]+)\([+-]?\d+\)'
-
-        # Corrected with brackets
         table_range_pattern = r'T(\d+)\.([A-Z]+)\[([+-]?\d+)\]:T(\d+)\.([A-Z]+)\[([+-]?\d+)\]'
 
         def replace_table_range(match):

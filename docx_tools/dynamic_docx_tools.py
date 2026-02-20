@@ -488,11 +488,13 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any]) -> None:
 
                 # Save to buffer and upload
                 buffer = io.BytesIO()
-                doc.save(buffer)
-                buffer.seek(0)
+                try:
+                    doc.save(buffer)
+                    buffer.seek(0)
 
-                result = upload_file(buffer, "docx")
-                buffer.close()
+                    result = upload_file(buffer, "docx")
+                finally:
+                    buffer.close()
 
                 logger.info(f"[dynamic-docx] Document generated from template {_name}")
                 return result
