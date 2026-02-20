@@ -87,9 +87,17 @@ class GCSSettings(BaseModel):
 
     @model_validator(mode="after")
     def _non_empty(self) -> "GCSSettings":
-        """Ensure the bucket name is non-empty."""
-        if not self.bucket.strip():
+        """Normalize credentials_path and ensure the bucket name is non-empty."""
+        # Normalize credentials_path: treat whitespace-only strings as missing.
+        if self.credentials_path is not None:
+            stripped = str(self.credentials_path).strip()
+            self.credentials_path = stripped or None
+
+        # Validate and normalize bucket.
+        bucket_stripped = str(self.bucket).strip()
+        if not bucket_stripped:
             raise ValueError("Missing required GCS setting: GCS_BUCKET")
+        self.bucket = bucket_stripped
         return self
 
 
