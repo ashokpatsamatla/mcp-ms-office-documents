@@ -85,6 +85,24 @@ SIGNED_URL_EXPIRES_IN=3600      # optional TTL in seconds for download links
 
 The MinIO backend reuses the existing boto3 dependency and generates pre-signed download links just like the AWS S3 strategy. Ensure the bucket exists and the provided credentials have `s3:PutObject`/`s3:GetObject` permissions.
 
+### Authentication
+
+You can protect the server with an API key by setting the `API_KEY` environment variable in your `.env` file:
+
+```
+API_KEY=your-secret-key
+```
+
+When `API_KEY` is set, every incoming request must carry the key in one of the following HTTP headers (checked in order):
+
+1. `Authorization: Bearer <key>` — standard OAuth 2.0 bearer token
+2. `Authorization: <key>` — plain token without scheme prefix
+3. `x-api-key: <key>` — common API-gateway convention
+
+Requests with a missing or invalid key are rejected with an error.
+
+If `API_KEY` is empty or not set, authentication is disabled and all requests are allowed through.
+
 ## 3) Custom templates
 
 You can provide custom templates for PowerPoint, Word, and email.
