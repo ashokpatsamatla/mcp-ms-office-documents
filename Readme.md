@@ -1,129 +1,216 @@
-# MCP Office Documents Server
+<div align="center">
 
-This server lets AI assistants generate professional PowerPoint, Word, Excel, XML, and EML email drafts through the Model Context Protocol (MCP).
+# 📄 MCP Office Documents Server
 
-## 1) Installation
+**Let your AI assistant create professional Office documents — PowerPoint, Word, Excel, emails & XML — with a single prompt.**
 
-- Requirements: Docker and Docker Compose
-- Prepare folders (create if missing):
-  - `output/` – where files are saved for LOCAL strategy
-  - `custom_templates/` – optional custom Office/email templates
-  - `config/` – configuration (e.g., `email_templates.yaml`, credentials)
-- Get docker-compose.yml (copy or download into this folder):
-```cmd
+[![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker)](https://hub.docker.com/)
+[![MCP](https://img.shields.io/badge/Protocol-MCP-green)](https://modelcontextprotocol.io/)
+[![License](https://img.shields.io/badge/License-MIT-yellow)]()
+
+</div>
+
+---
+
+## 📋 Table of Contents
+
+- [What is this?](#-what-is-this)
+- [Features at a Glance](#-features-at-a-glance)
+- [Quick Start](#-quick-start)
+- [Configuration](#-configuration)
+- [Custom Templates](#-custom-templates)
+- [Connecting Your AI Client](#-connecting-your-ai-client)
+- [Contributing](#-contributing)
+
+---
+
+## 💡 What is this?
+
+This is an **MCP (Model Context Protocol) server** that runs in Docker and gives AI assistants (like Claude, Cursor, or any MCP-compatible client) the ability to generate real Office files on demand.
+
+Just ask your AI to _"create a sales presentation"_ or _"draft a welcome email"_ — and it will produce a ready-to-use file for you.
+
+**No coding required.** Install, connect, and start creating.
+
+---
+
+## ✨ Features at a Glance
+
+| Document Type | Tool | Highlights |
+|:---:|---|---|
+| 📊 **PowerPoint** | `create_powerpoint_presentation` | Title, section & content slides · 4:3 or 16:9 format · Custom templates |
+| 📝 **Word** | `create_word_from_markdown` | Write in Markdown, get a `.docx` · Headers, lists, tables, links, formatting |
+| 📈 **Excel** | `create_excel_from_markdown` | Markdown tables → `.xlsx` · Formulas & cell references supported |
+| 📧 **Email** | `create_email_draft` | HTML email drafts (`.eml`) · Subject, recipients, priority, language |
+| 🗂️ **XML** | `create_xml_file` | Well-formed XML files · Auto-validates & adds XML declaration if missing |
+
+**Bonus — Dynamic Templates:**
+
+- 📧 **Reusable Email Templates** — Define parameterized email layouts in YAML. Each becomes its own tool with typed arguments (e.g., `first_name`, `promo_code`).
+- 📝 **Reusable Word Templates** — Create `.docx` files with `{{placeholders}}`. Each template becomes an AI tool. Placeholders support full Markdown.
+
+**Output options:**
+- **Local** — Files saved to the `output/` folder
+- **Cloud** — Upload to S3, Google Cloud Storage, Azure Blob, or MinIO and get a time-limited download link
+
+---
+
+## 🚀 Quick Start
+
+Get up and running in **3 steps**:
+
+### 1. Download the compose file
+
+```bash
 curl -L -o docker-compose.yml https://raw.githubusercontent.com/dvejsada/mcp-ms-office-docs/main/docker-compose.yml
 ```
-  (If you already cloned this repository, you can just copy the existing `docker-compose.yml`.)
-- Configure environment:
-  - Copy `.env.example` to `.env`
-  - Edit `.env`:
-    - `LOG_LEVEL=INFO|DEBUG`
-    - `UPLOAD_STRATEGY=LOCAL|S3|GCS|AZURE|MINIO`
-    - For S3/GCS/AZURE/MINIO, fill the required credentials
-- Start the server:
+
+> Already cloned the repo? Skip this step — `docker-compose.yml` is already there.
+
+### 2. Set up your environment
+
+```bash
+cp .env.example .env
+```
+
+The defaults work out of the box — files will be saved locally to `output/`.
+
+### 3. Start the server
+
 ```bash
 docker-compose up -d
 ```
-- MCP endpoint: `http://localhost:8958/mcp`
 
+✅ **Done!** Your MCP endpoint is ready at: `http://localhost:8958/mcp`
 
-## 2) Tool overview
+---
 
-The server exposes these MCP tools:
+## ⚙️ Configuration
 
-- create_powerpoint_presentation
-  - Creates a .pptx from structured slides (title, section, content) with optional templates
-  - Format: `4:3`  or `16:9`(default)
+The server is configured through environment variables in your `.env` file.
 
-- create_word_from_markdown
-  - Converts Markdown to .docx, supporting headers, lists, tables, inline formatting, links, block quotes
-  - **Markdown formatting:** All placeholder values support full markdown:
-    - Inline: `**bold**`, `*italic*`, `` `code` ``, `[links](url)`
-    - Block-level: headings (`#`), bullet lists (`-`, `*`, `+`), numbered lists (`1.`, `2.`)
+### Basic Settings
 
-- create_excel_from_markdown
-  - Converts Markdown tables and headers to .xlsx
-  - Supports formulas and relative/table references (e.g., `=B[0]`, `T1.SUM(B[0]:E[0])`)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DEBUG` | Enable debug logging (`1`, `true`, `yes`) | _(off)_ |
+| `API_KEY` | Protect the server with an API key (see Authentication below) | _(disabled)_ |
+| `UPLOAD_STRATEGY` | Where to save files: `LOCAL`, `S3`, `GCS`, `AZURE`, `MINIO` | `LOCAL` |
+| `SIGNED_URL_EXPIRES_IN` | How long cloud download links stay valid (seconds) | `3600` |
 
-- create_email_draft
-  - Creates an EML draft with an HTML body using a preset wrapper template
-  - Accepts subject, to/cc/bcc, priority, language, and raw content (no <html>/<body>/<style>)
+<details>
+<summary><strong>🔐 Authentication</strong></summary>
 
-- create_xml_file
-  - Creates an XML file from provided XML content
-  - Validates that input is well-formed XML before saving
-  - XML declaration (`<?xml version="1.0"?>`) is added automatically if missing
-
-Dynamic email tools (optional):
-- If `config/email_templates.yaml` exists, each entry is registered as its own email-draft tool at startup. See below for details.
-
-- Short explanation: Dynamic email templates are reusable, parameterized HTML email layouts defined in `config/email_templates.yaml`. At startup the server registers each template as an individual MCP tool and automatically adds standard fields (subject, to, cc, bcc, priority, language). Template-specific arguments (for example `first_name` or `promo_code`) are exposed as tool parameters so AI assistants can call a single, strongly-typed tool to produce consistent, production-ready emails without composing full HTML bodies.
-
-Dynamic DOCX template tools (optional):
-- If `config/docx_templates.yaml` exists, each entry is registered as its own document generation tool at startup. See below for details.
-
-- Short explanation: Dynamic DOCX templates are reusable Word documents with placeholders (`{{placeholder_name}}`) defined in `config/docx_templates.yaml`. At startup, the server registers each template as an individual MCP tool. Template-specific arguments are exposed as tool parameters. Placeholder values support the same markdown formatting as described above for `create_word_from_markdown`.
-
-Outputs:
-- LOCAL: files saved to `output/` and reported back
-- S3/GCS/AZURE/MINIO: a time-limited download link is returned (TTL via `SIGNED_URL_EXPIRES_IN`)
-
-### MinIO private storage
-
-You can point the server to a self-hosted MinIO instance (or any other S3 compatible storage) by setting `UPLOAD_STRATEGY=MINIO` and providing:
-
-```
-MINIO_ENDPOINT=https://minio.example.com
-MINIO_ACCESS_KEY=...
-MINIO_SECRET_KEY=...
-MINIO_BUCKET=office-documents
-MINIO_REGION=us-east-1          # optional, defaults to us-east-1
-MINIO_VERIFY_SSL=true           # optional, set to false for self-signed endpoints
-MINIO_PATH_STYLE=true           # optional, defaults to true (recommended for MinIO)
-SIGNED_URL_EXPIRES_IN=3600      # optional TTL in seconds for download links
-```
-
-The MinIO backend reuses the existing boto3 dependency and generates pre-signed download links just like the AWS S3 strategy. Ensure the bucket exists and the provided credentials have `s3:PutObject`/`s3:GetObject` permissions.
-
-### Authentication
-
-You can protect the server with an API key by setting the `API_KEY` environment variable in your `.env` file:
+Set `API_KEY` in your `.env` to require an API key for all requests:
 
 ```
 API_KEY=your-secret-key
 ```
 
-When `API_KEY` is set, every incoming request must carry the key in one of the following HTTP headers (checked in order):
+Clients can send the key in any of these headers:
 
-1. `Authorization: Bearer <key>` — standard OAuth 2.0 bearer token
-2. `Authorization: <key>` — plain token without scheme prefix
-3. `x-api-key: <key>` — common API-gateway convention
+| Header | Format |
+|--------|--------|
+| `Authorization` | `Bearer your-secret-key` |
+| `Authorization` | `your-secret-key` |
+| `x-api-key` | `your-secret-key` |
 
-Requests with a missing or invalid key are rejected with an error.
+Leave `API_KEY` empty or unset to allow all requests without authentication.
 
-If `API_KEY` is empty or not set, authentication is disabled and all requests are allowed through.
+</details>
 
-## 3) Custom templates
+<details>
+<summary><strong>☁️ AWS S3 Storage</strong></summary>
 
-You can provide custom templates for PowerPoint, Word, and email.
+Set `UPLOAD_STRATEGY=S3` and provide:
 
-Place files in `custom_templates/`.
+| Variable | Description |
+|----------|-------------|
+| `AWS_ACCESS_KEY` | Your AWS access key |
+| `AWS_SECRET_ACCESS_KEY` | Your AWS secret key |
+| `AWS_REGION` | AWS region (e.g., `us-east-1`) |
+| `S3_BUCKET` | S3 bucket name |
 
-- PowerPoint: `custom_pptx_template_4_3.pptx`, `custom_pptx_template_16_9.pptx`
+</details>
 
-- Word: `custom_docx_template.docx`
+<details>
+<summary><strong>☁️ Google Cloud Storage</strong></summary>
 
-- Email wrapper : `custom_email_template.html` - base your template on `default_templates/default_email_template.html`
+Set `UPLOAD_STRATEGY=GCS` and provide:
 
-Dynamic email templates (optional):
+| Variable | Description |
+|----------|-------------|
+| `GCS_BUCKET` | GCS bucket name |
+| `GCS_CREDENTIALS_PATH` | Path to service account JSON (default: `/app/config/gcs-credentials.json`) |
 
-- Create `config/email_templates.yaml` and reference HTML files by filename only (no paths).
-- Example entry:
+Mount the credentials file via `docker-compose.yml` volumes.
+
+</details>
+
+<details>
+<summary><strong>☁️ Azure Blob Storage</strong></summary>
+
+Set `UPLOAD_STRATEGY=AZURE` and provide:
+
+| Variable | Description |
+|----------|-------------|
+| `AZURE_STORAGE_ACCOUNT_NAME` | Storage account name |
+| `AZURE_STORAGE_ACCOUNT_KEY` | Storage account key |
+| `AZURE_CONTAINER` | Blob container name |
+| `AZURE_BLOB_ENDPOINT` | _(Optional)_ Custom endpoint for sovereign clouds |
+
+</details>
+
+<details>
+<summary><strong>☁️ MinIO / S3-Compatible Storage</strong></summary>
+
+Set `UPLOAD_STRATEGY=MINIO` and provide:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MINIO_ENDPOINT` | MinIO server URL (e.g., `https://minio.example.com`) | _(required)_ |
+| `MINIO_ACCESS_KEY` | Access key | _(required)_ |
+| `MINIO_SECRET_KEY` | Secret key | _(required)_ |
+| `MINIO_BUCKET` | Bucket name | _(required)_ |
+| `MINIO_REGION` | Region | `us-east-1` |
+| `MINIO_VERIFY_SSL` | Verify SSL certificates | `true` |
+| `MINIO_PATH_STYLE` | Use path-style URLs (recommended for MinIO) | `true` |
+
+Make sure the bucket exists and your credentials have `PutObject`/`GetObject` permissions.
+
+</details>
+
+---
+
+## 🎨 Custom Templates
+
+You can customize the look of generated documents by providing your own templates.
+
+### Static Templates
+
+Place files in the `custom_templates/` folder:
+
+| Document | Filename | Notes |
+|----------|----------|-------|
+| PowerPoint 4:3 | `custom_pptx_template_4_3.pptx` | |
+| PowerPoint 16:9 | `custom_pptx_template_16_9.pptx` | |
+| Word | `custom_docx_template.docx` | |
+| Email wrapper | `custom_email_template.html` | Base it on `default_templates/default_email_template.html` |
+
+### Dynamic Email Templates
+
+Create reusable, parameterized email layouts that your AI can fill in automatically.
+
+<details>
+<summary><strong>📧 How to set up dynamic email templates</strong></summary>
+
+**1.** Create `config/email_templates.yaml`:
+
 ```yaml
 templates:
   - name: welcome_email
     description: Welcome email with optional promo code
-    html_path: welcome_email.html  # file must exist in custom_templates/ or default_templates/
+    html_path: welcome_email.html  # must be in custom_templates/ or default_templates/
     annotations:
       title: Welcome Email
     args:
@@ -133,46 +220,46 @@ templates:
         required: true
       - name: promo_code
         type: string
-        description: Optional promotional code (html formatted)
+        description: Optional promotional code (HTML formatted)
         required: false
 ```
-- Minimal example HTML (place in `custom_templates/welcome_email.html`):
+
+**2.** Create the HTML file in `custom_templates/welcome_email.html`:
+
 ```html
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-</head>
+<head><meta charset="UTF-8" /></head>
 <body>
   <h2>Welcome {{first_name}}!</h2>
-  <p>We’re excited to have you on board.</p>
+  <p>We're excited to have you on board.</p>
   {{{promo_code_block}}}
   <p>Regards,<br/>Support Team</p>
 </body>
 </html>
 ```
-- Subject, to, cc, bcc, priority, and language are handled automatically and added to each template tool.
-- Tip: use `{{variable}}` for escaped text; `{{{variable}}}` for raw HTML
 
-### Dynamic DOCX Templates
+**How it works:**
+- Each template becomes a separate AI tool at startup
+- Standard email fields (subject, to, cc, bcc, priority, language) are added automatically
+- Use `{{variable}}` for escaped text, `{{{variable}}}` for raw HTML
 
-Dynamic DOCX templates allow you to create reusable Word document templates with placeholders that support full markdown formatting.
+</details>
 
-#### Setup
+### Dynamic Word (DOCX) Templates
 
-1. Create `config/docx_templates.yaml` and reference DOCX template files by filename only (no paths).
-2. Place your `.docx` template files in `custom_templates/` directory.
-3. Use `{{placeholder_name}}` syntax in your Word document for placeholders.
-4. Placeholders can be placed in document body, tables, headers, and footers.
+Create reusable Word documents with `{{placeholders}}` that support full Markdown formatting.
 
-#### Example YAML configuration
+<details>
+<summary><strong>📝 How to set up dynamic DOCX templates</strong></summary>
 
-Create `config/docx_templates.yaml`:
+**1.** Create `config/docx_templates.yaml`:
+
 ```yaml
 templates:
   - name: formal_letter
-    description: Generate a formal business letter. Placeholder values support markdown formatting (see tool overview).
-    docx_path: letter_template.docx  # must exist in custom_templates/ or default_templates/
+    description: Generate a formal business letter
+    docx_path: letter_template.docx  # must be in custom_templates/ or default_templates/
     annotations:
       title: Formal Letter Generator
     args:
@@ -182,7 +269,7 @@ templates:
         required: true
       - name: recipient_address
         type: string
-        description: Recipient's address (use line breaks for multiple lines)
+        description: Recipient's address
         required: true
       - name: subject
         type: string
@@ -203,9 +290,8 @@ templates:
         default: ""
 ```
 
-#### Example DOCX template
+**2.** Create a Word document with placeholders and save as `custom_templates/letter_template.docx`:
 
-Create in Word and save as `custom_templates/letter_template.docx`:
 ```
 {{date}}
 
@@ -214,73 +300,122 @@ Create in Word and save as `custom_templates/letter_template.docx`:
 
 Subject: {{subject}}
 
-{{salutation}}
-
 {{body}}
 
-{{closing}}
-
 {{sender_name}}
-{{sender_title}}
 ```
 
-#### Markdown Formatting Support
+**How it works:**
+- Each template becomes a separate AI tool at startup
+- Placeholders can be in the document body, tables, headers, and footers
+- Placeholder values support full Markdown (bold, italic, lists, headings…)
+- The original font from the placeholder location is preserved
 
-**Inline formatting** (works within any text):
-| Markdown | Result |
+</details>
+
+<details>
+<summary><strong>🎯 Word style requirements for custom templates</strong></summary>
+
+For proper formatting, make sure these styles exist in your `.docx` template:
+
+| Category | Styles |
 |----------|--------|
-| `**bold text**` | Bold text |
-| `*italic text*` | Italic text |
-| `` `code` `` | Monospace font (Courier New) |
-| `[link text](url)` | Clickable hyperlink |
-| `**bold with *nested italic***` | Nested formatting |
+| Headings | Heading 1 – Heading 6 |
+| Bullet lists | List Bullet, List Bullet 2, List Bullet 3 |
+| Numbered lists | List Number, List Number 2, List Number 3 |
+| Other | Normal, Quote, Table Grid |
 
-**Block-level markdown** (creates new paragraphs):
+> **Tip:** Customize these styles (font, size, color, spacing) in your template — the server will use your styling.
 
-| Markdown | Description |
-|----------|-------------|
-| `# Heading 1` through `###### Heading 6` | Heading levels 1-6 |
-| `- item` or `* item` or `+ item` | Bullet list |
-| `1. item`, `2. item` | Numbered list |
-| 3 spaces + list marker | Nested list (up to 3 levels) |
+</details>
 
-Example of block-level content in a placeholder value:
-```markdown
-Here are the key points:
+---
 
-1. First important item
-2. Second important item
-   - Sub-point A
-   - Sub-point B
-3. Third item with **bold** emphasis
+## 🔌 Connecting Your AI Client
 
-## Next Steps
+Point your MCP-compatible client to the server endpoint:
 
-- Review the proposal
-- Schedule a follow-up meeting
+```
+http://localhost:8958/mcp
 ```
 
-#### Word Styles Used
+**Examples for popular clients:**
 
-When creating custom templates, ensure these Word styles exist for proper formatting:
+<details>
+<summary><strong>Claude Desktop</strong></summary>
 
-**Heading styles:**
-- Heading 1 through Heading 6 (used for markdown `#` headings)
+Add to your Claude Desktop MCP config:
 
-**List styles:**
-- List Bullet, List Bullet 2, List Bullet 3 (for nested bullet lists)
-- List Number, List Number 2, List Number 3 (for nested numbered lists)
+```json
+{
+  "mcpServers": {
+    "office-documents": {
+      "url": "http://localhost:8958/mcp"
+    }
+  }
+}
+```
 
-**Other styles:**
-- Quote (for blockquotes - base tool only)
-- Table Grid (for markdown tables - base tool only)
-- Normal (regular paragraphs)
+</details>
 
-> **Tip:** You can customize these styles in your template (font, size, color, spacing) and the system will use your customizations.
+<details>
+<summary><strong>LibreChat</strong></summary>
 
-#### Additional Features
+Add the server to your `librechat.yaml` configuration under `mcpServers`:
 
-- **Font preservation:** The original font size and name from the placeholder location in the template are preserved for inline replacement text.
-- **Table support:** Placeholders work inside table cells with full markdown formatting.
-- **Header/Footer support:** Placeholders in document headers and footers are replaced (inline formatting only).
+```yaml
+mcpServers:
+  office-documents:
+    type: streamableHttp
+    url: http://mcp-office-docs:8958/mcp
+```
 
+> **Note:** If LibreChat and this server run in the same Docker network, use the container name (`mcp-office-docs`) as the hostname. If they run separately, use `http://localhost:8958/mcp` instead.
+
+To place both services on the same network, add a shared network in your `docker-compose.yml`:
+
+```yaml
+services:
+  mcp-office-docs:
+    # ...existing config...
+    networks:
+      - shared
+
+  librechat:
+    # ...existing config...
+    networks:
+      - shared
+
+networks:
+  shared:
+    driver: bridge
+```
+
+</details>
+
+<details>
+<summary><strong>Cursor / Other MCP Clients</strong></summary>
+
+Use the SSE/streamable HTTP transport and set the endpoint URL to:
+
+```
+http://localhost:8958/mcp
+```
+
+If you have authentication enabled, add the API key header as required by your client.
+
+</details>
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! If you'd like to help improve this project:
+
+1. **Fork** the repository
+2. **Create a branch** for your feature or fix (`git checkout -b my-feature`)
+3. **Commit** your changes (`git commit -m "Add my feature"`)
+4. **Push** to your branch (`git push origin my-feature`)
+5. **Open a Pull Request**
+
+Whether it's a bug report, a new feature idea, documentation improvement, or a code contribution — all input is appreciated. Feel free to open an [issue](https://github.com/dvejsada/mcp-ms-office-docs/issues) to start a discussion.
